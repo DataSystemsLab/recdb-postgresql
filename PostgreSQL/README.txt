@@ -1,1 +1,0 @@
-Recommendation Inside PostgreSQL
