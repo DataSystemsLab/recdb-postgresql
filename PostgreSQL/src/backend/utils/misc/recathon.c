@@ -48,7 +48,6 @@
 #define NBRHOOD 0
 
 static float getUpdateThreshold();
-static int getUserFromInsert(TupleTableSlot *insertslot, char *userkey);
 
 /* ----------------------------------------------------------------
  *		createSimNode
@@ -57,12 +56,12 @@ static int getUserFromInsert(TupleTableSlot *insertslot, char *userkey);
  * ----------------------------------------------------------------
  */
 sim_node
-createSimNode(int userid, float rating) {
+createSimNode(int userid, float event) {
 	sim_node newnode;
 
 	newnode = (sim_node) palloc(sizeof(struct sim_node_t));
 	newnode->id = userid;
-	newnode->rating = rating;
+	newnode->event = event;
 	newnode->next = NULL;
 
 	return newnode;
@@ -697,45 +696,54 @@ columnExistsInRelation(char *colname, RangeVar *relation) {
 }
 
 /* ----------------------------------------------------------------
- *		recommenderExists
+ *		retrieveRecommender
  *
- *		Function to check if a given recommender has been
- *		created, since we don't maintain a straight list.
- *		Assumes RecModelsCatalogue exists.
+ *		Given an event table and a recommendation method,
+ *		we look to see if any recommenders are already
+ *		built. If so, we return the RecIndex name.
  * ----------------------------------------------------------------
  */
-bool
-recommenderExists(char *recname) {
-	char *recindexname;
-	bool result;
-	// Information for query.
-	char *querystring;
+char*
+retrieveRecommender(char *eventtable, char *method) {
+	RangeVar *cataloguerv;
+	char *querystring, *recindexname;
 	QueryDesc *queryDesc;
 	PlanState *planstate;
 	TupleTableSlot *slot;
 	MemoryContext recathoncontext;
 
-	recindexname = (char*) palloc((strlen(recname)+6)*sizeof(char));
-	sprintf(recindexname,"%sIndex",recname);
+	// If this fails, there's no RecModelsCatalogue, so
+	// there are no recommenders.
+	cataloguerv = makeRangeVar(NULL,"recmodelscatalogue",0);
+	if (!relationExists(cataloguerv)) {
+		pfree(cataloguerv);
+		return NULL;
+	}
+	pfree(cataloguerv);
 
-	// We're going to do a query just to make sure that a result is
-	// returned.
-	querystring = (char*) palloc(512*sizeof(char));
-	sprintf(querystring,"SELECT recommenderId FROM RecModelsCatalogue WHERE recommenderIndexName = '%s';",
-				recindexname);
+	// If the catalogue does exist, we'll query it looking
+	// for recommenders based on the given information.
+	querystring = (char*) palloc(1024*sizeof(char));
+	sprintf(querystring,"SELECT recommenderindexname FROM RecModelsCatalogue WHERE eventtable = '%s' AND method = '%s';",
+		eventtable, method);
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
 
-	// Is a slot is returned, then we have a recommender with this name.
 	slot = ExecProcNode(planstate);
-	result = !TupIsNull(slot);
+	// If there are no results, the recommender does not exist.
+	if (TupIsNull(slot)) {
+		recathon_queryEnd(queryDesc,recathoncontext);
+		pfree(querystring);
+		return NULL;
+	}
 
-	// Cleanup.
+	recindexname = getTupleString(slot,"recommenderindexname");
+
+	// Query cleanup.
 	recathon_queryEnd(queryDesc,recathoncontext);
 	pfree(querystring);
-	pfree(recindexname);
 
-	return result;
+	return recindexname;
 }
 
 /* ----------------------------------------------------------------
@@ -749,10 +757,10 @@ recommenderExists(char *recname) {
  * ----------------------------------------------------------------
  */
 void
-getRecInfo(char *recindexname, char **ret_usertable, char **ret_itemtable,
-		char **ret_ratingtable,	char **ret_userkey, char **ret_itemkey,
-		char **ret_ratingval, char **ret_method, int *ret_numatts) {
-	char *usertable, *itemtable, *ratingtable, *userkey, *itemkey, *ratingval, *method;
+getRecInfo(char *recindexname, char **ret_eventtable,
+		char **ret_userkey, char **ret_itemkey,
+		char **ret_eventval, char **ret_method, int *ret_numatts) {
+	char *eventtable, *userkey, *itemkey, *eventval, *method;
 	// Information for query.
 	char *querystring;
 	QueryDesc *queryDesc;
@@ -774,17 +782,9 @@ getRecInfo(char *recindexname, char **ret_usertable, char **ret_itemtable,
 			 errmsg("fatal error in getRecInfo()")));
 
 	// Obtain each of the values needed.
-	if (ret_usertable) {
-		usertable = getTupleString(slot,"usertable");
-		(*ret_usertable) = usertable;
-	}
-	if (ret_itemtable) {
-		itemtable = getTupleString(slot,"itemtable");
-		(*ret_itemtable) = itemtable;
-	}
-	if (ret_ratingtable) {
-		ratingtable = getTupleString(slot,"ratingtable");
-		(*ret_ratingtable) = ratingtable;
+	if (ret_eventtable) {
+		eventtable = getTupleString(slot,"eventtable");
+		(*ret_eventtable) = eventtable;
 	}
 	if (ret_userkey) {
 		userkey = getTupleString(slot,"userkey");
@@ -794,9 +794,9 @@ getRecInfo(char *recindexname, char **ret_usertable, char **ret_itemtable,
 		itemkey = getTupleString(slot,"itemkey");
 		(*ret_itemkey) = itemkey;
 	}
-	if (ret_ratingval) {
-		ratingval = getTupleString(slot,"ratingval");
-		(*ret_ratingval) = ratingval;
+	if (ret_eventval) {
+		eventval = getTupleString(slot,"eventval");
+		(*ret_eventval) = eventval;
 	}
 	if (ret_method) {
 		method = getTupleString(slot,"method");
@@ -811,375 +811,47 @@ getRecInfo(char *recindexname, char **ret_usertable, char **ret_itemtable,
 }
 
 /* ----------------------------------------------------------------
- *		getAttNames
- *
- *		Obtain the names of all the context attributes for
- *		a given recommender.
- * ----------------------------------------------------------------
- */
-char**
-getAttNames(char *recindexname, int numatts, int method) {
-	int i, natts, skipatts;
-	char **attnames;
-	// Objects for our query.
-	char *querystring;
-	QueryDesc *queryDesc;
-	PlanState *planstate;
-	TupleTableSlot *slot;
-	MemoryContext recathoncontext;
-
-	// Allocate memory.
-	attnames = (char**) palloc(numatts*sizeof(char*));
-	for (i = 0; i < numatts; i++)
-		attnames[i] = (char*) palloc(256*sizeof(char));
-
-	// Firstly, how we go about this depends on the recommendation
-	// method being used.
-	if (((recMethod) method) == SVD)
-		skipatts = 10;
-	else
-		skipatts = 9;
-
-	// We execute a query to obtain the column names. We used to do
-	// this by opening a relation manually, but that way is not
-	// reliable.
-	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"SELECT * FROM %s;",recindexname);
-	queryDesc = recathon_queryStart(querystring,&recathoncontext);
-	planstate = queryDesc->planstate;
-
-	slot = ExecProcNode(planstate);
-	if (TupIsNull(slot)) {
-		recathon_queryEnd(queryDesc, recathoncontext);
-		pfree(querystring);
-		return NULL;
-	}
-	slot_getallattrs(slot);
-	natts = slot->tts_tupleDescriptor->natts;
-
-	// Error check. Not sure when this would happen, unless the
-	// admin is messing with index tables.
-	if (natts-skipatts != numatts) {
-		recathon_queryEnd(queryDesc, recathoncontext);
-		pfree(querystring);
-		return NULL;
-	}
-
-	// The first nine/ten columns are standard stuff.
-	for (i = skipatts; i < natts; i++) {
-		if (!slot->tts_isnull[i]) {
-			char *col_name;
-
-			col_name = slot->tts_tupleDescriptor->attrs[i]->attname.data;
-			sprintf(attnames[i-skipatts],"%s",col_name);
-		}
-	}
-
-	recathon_queryEnd(queryDesc, recathoncontext);
-	pfree(querystring);
-
-	return attnames;
-}
-
-/* ----------------------------------------------------------------
- *		getAttValues
- *
- *		Given a user ID, obtain the values that correspond
- *		to the provided attributes.
- * ----------------------------------------------------------------
- */
-char**
-getAttValues(char *usertable, char *userkey, char **attnames, int numatts, int userid) {
-	int i, j, natts;
-	char **attvalues;
-	bool match_found[numatts];
-	// Query information.
-	char *querystring;
-	QueryDesc *queryDesc;
-	PlanState *planstate;
-	TupleTableSlot *slot;
-	MemoryContext recathoncontext;
-
-	if (!attnames) return NULL;
-
-	// Allocate memory.
-	attvalues = (char**) palloc(numatts*sizeof(char**));
-	for (i = 0; i < numatts; i++)
-		match_found[i] = false;
-
-	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"SELECT * FROM %s WHERE %s = %d;",usertable,userkey,userid);
-	queryDesc = recathon_queryStart(querystring,&recathoncontext);
-	planstate = queryDesc->planstate;
-
-	slot = ExecProcNode(planstate);
-	if (TupIsNull(slot)) {
-		recathon_queryEnd(queryDesc,recathoncontext);
-		pfree(querystring);
-		for (i = 0; i < numatts; i++)
-			pfree(attvalues[i]);
-		pfree(attvalues);
-		return NULL;
-	}
-	slot_getallattrs(slot);
-	natts = slot->tts_tupleDescriptor->natts;
-
-	// Look through this tuple and pull out attribute values.
-	for (i = 0; i < natts; i++) {
-		if (!slot->tts_isnull[i]) {
-			char *col_name;
-			Datum slot_result;
-			// What we do depends on the column name.
-			col_name = slot->tts_tupleDescriptor->attrs[i]->attname.data;
-			slot_result = slot->tts_values[i];
-
-			// Does this column match one of our attributes?
-			for (j = 0; j < numatts; j++) {
-				if  (strcmp(col_name,attnames[j]) == 0) {
-					attvalues[j] = TextDatumGetCString(slot_result);
-					match_found[j] = true;
-				}
-			}
-		}
-	}
-
-	recathon_queryEnd(queryDesc,recathoncontext);
-	pfree(querystring);
-
-	// Check to make sure we obtained all attributes.
-	for (i = 0; i < numatts; i++) {
-		if (match_found[i] == false) {
-			// Error, return NULL.
-			for (j = 0; j < numatts; j++)
-				pfree(attvalues[j]);
-			pfree(attvalues);
-			return NULL;
-		}
-	}
-
-	return attvalues;
-}
-
-/* ----------------------------------------------------------------
- *		convertAttributes
- *
- *		A function to take a target_list of attributes and
- *		convert it into a linked list of attr_nodes.
- * ----------------------------------------------------------------
- */
-attr_node
-convertAttributes(List* attributes, int *numatts) {
-	ListCell *templist;
-	attr_node head_attr, tail_attr;
-	int n = 0;
-
-	if (attributes == NULL) {
-		(*numatts) = n;
-		return NULL;
-	}
-	templist = attributes->head;
-	head_attr = NULL;
-	tail_attr = NULL;
-	for (;templist;templist = templist->next) {
-		attr_node temp_attr;
-		List *templist2;
-		ListCell *tempcell;
-
-		temp_attr = (attr_node) palloc(sizeof(struct attr_node_t));
-		temp_attr->relation = NULL;
-		temp_attr->colname = NULL;
-		temp_attr->next = NULL;
-		if (head_attr == NULL) {
-			head_attr = temp_attr;
-			tail_attr = temp_attr;
-		} else {
-			if (tail_attr == NULL)
-				ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("critical failure in convertAttributes()")));
-			tail_attr->next = temp_attr;
-			tail_attr = temp_attr;
-		}
-
-		templist2 = (List*) templist->data.ptr_value;
-		tempcell = templist2->head;
-		for (;tempcell;tempcell = tempcell->next) {
-			Value  *tempvalue;
-			char *tempstring;
-
-			tempvalue = (Value*) tempcell->data.ptr_value;
-			tempstring = (char*) tempvalue->val.str;
-			// Test to see how many periods we have in this term.
-			if (temp_attr->relation == NULL)
-				temp_attr->relation = makeRangeVar(NULL, tempstring, 0);
-			else if (temp_attr->colname == NULL)
-				temp_attr->colname = tempstring;
-			else
-				ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("improper argument to ATTRIBUTES")));
-		}
-
-		// Increment the number.
-		n++;
-	}
-
-	(*numatts) = n;
-	return head_attr;
-}
-
-/* ----------------------------------------------------------------
- *		freeAttributes
- *
- *		A function to free a list of attr_nodes.
- * ----------------------------------------------------------------
- */
-void
-freeAttributes(attr_node head) {
-	attr_node temp;
-	while (head) {
-		temp = head->next;
-		pfree(head->relation);
-		pfree(head);
-		head = temp;
-	}
-}
-
-/* ----------------------------------------------------------------
  *		validateCreateRStmt
  *
  *		We need to implement a series of sanity checks, to
- *		make sure the data is actually usable.
+ *		make sure CREATE RECOMMENDER statement data is
+ *		actually usable.
  * ----------------------------------------------------------------
  */
-attr_node
-validateCreateRStmt(CreateRStmt *recStmt, recMethod *ret_method, int *ret_numatts) {
-	int numatts;
-	char *recindexname;
-	RangeVar *indexrv;
+recMethod
+validateCreateRStmt(CreateRStmt *recStmt) {
 	recMethod method;
-	attr_node head_node, temp_head;
 
-	// Our first test is to make sure the three attribute
-	// tables have unique names.
-	if (strcmp(recStmt->usertable->relname,recStmt->itemtable->relname) == 0)
-		ereport(ERROR,
-			(errcode(ERRCODE_DUPLICATE_TABLE),
-			 errmsg("user table and item table are the same")));
-	if (strcmp(recStmt->usertable->relname,recStmt->ratingtable->relname) == 0)
-		ereport(ERROR,
-			(errcode(ERRCODE_DUPLICATE_TABLE),
-			 errmsg("user table and rating table are the same")));
-	if (strcmp(recStmt->itemtable->relname,recStmt->ratingtable->relname) == 0)
-		ereport(ERROR,
-			(errcode(ERRCODE_DUPLICATE_TABLE),
-			 errmsg("item table and rating table are the same")));
-
-	// We next test the to-be-created relation
-	// to make sure it doesn't exist.
-	recindexname = (char*) palloc((strlen(recStmt->relation->relname)+6)*sizeof(char));
-	sprintf(recindexname,"%sindex",recStmt->relation->relname);
-	indexrv = makeRangeVar(NULL,recindexname,-1);
-	if (relationExists(indexrv))
-		ereport(ERROR,
-			(errcode(ERRCODE_DUPLICATE_TABLE),
-			 errmsg("required table \"%s\" already exists, choose a different recommender name",
-				recindexname)));
-	pfree(indexrv);
-	pfree(recindexname);
-
-	// We then make sure the other relations DO exist.
-	// Test: user table exists.
-	if (!relationExists(recStmt->usertable))
+	// Our first test is to make sure the events table exists.
+	if (!relationExists(recStmt->eventtable))
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_TABLE),
 			 errmsg("relation \"%s\" does not exist",
-			 	 recStmt->usertable->relname)));
-	// Test: item table exists.
-	if (!relationExists(recStmt->itemtable))
-		ereport(ERROR,
-			(errcode(ERRCODE_UNDEFINED_TABLE),
-			 errmsg("relation \"%s\" does not exist",
-				recStmt->itemtable->relname)));
-	// Test: rating table exists.
-	if (!relationExists(recStmt->ratingtable))
-		ereport(ERROR,
-			(errcode(ERRCODE_UNDEFINED_TABLE),
-			 errmsg("relation \"%s\" does not exist",
-				recStmt->ratingtable->relname)));
+				recStmt->eventtable->relname)));
+
+	// Our second test is to see whether or not a recommender has already
+	// been created with the given events table and method.
 
 	// We next need to test that the provided columns
-	// exist in the appropriate tables.
-	// Test: user key is in user table.
-	if (!columnExistsInRelation(recStmt->userkey,recStmt->usertable))
+	// exist in the events table.
+	// Test: user key is in event table.
+	if (!columnExistsInRelation(recStmt->userkey,recStmt->eventtable))
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_COLUMN),
 			 errmsg("column \"%s\" does not exist in relation \"%s\"",
-				recStmt->userkey,recStmt->usertable->relname)));
-	// Test: item key is in item table.
-	if (!columnExistsInRelation(recStmt->itemkey,recStmt->itemtable))
+				recStmt->userkey,recStmt->eventtable->relname)));
+	// Test: item key is in event table.
+	if (!columnExistsInRelation(recStmt->itemkey,recStmt->eventtable))
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_COLUMN),
 			 errmsg("column \"%s\" does not exist in relation \"%s\"",
-				recStmt->itemkey,recStmt->itemtable->relname)));
-	// Test: rating value is in rating table.
-	if (!columnExistsInRelation(recStmt->ratingval,recStmt->ratingtable))
+				recStmt->itemkey,recStmt->eventtable->relname)));
+	// Test: event value is in event table.
+	if (!columnExistsInRelation(recStmt->eventval,recStmt->eventtable))
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_COLUMN),
 			 errmsg("column \"%s\" does not exist in relation \"%s\"",
-				recStmt->ratingval,recStmt->ratingtable->relname)));
-	// Test: user key is in rating table.
-	if (!columnExistsInRelation(recStmt->userkey,recStmt->ratingtable))
-		ereport(ERROR,
-			(errcode(ERRCODE_UNDEFINED_COLUMN),
-			 errmsg("column \"%s\" does not exist in relation \"%s\"",
-				recStmt->userkey,recStmt->ratingtable->relname)));
-	// Test: item key is in rating table.
-	if (!columnExistsInRelation(recStmt->itemkey,recStmt->ratingtable))
-		ereport(ERROR,
-			(errcode(ERRCODE_UNDEFINED_COLUMN),
-			 errmsg("column \"%s\" does not exist in relation \"%s\"",
-				recStmt->itemkey,recStmt->ratingtable->relname)));
-
-	// Test: list of attributes corresponds to real columns and relations
-	head_node = convertAttributes(recStmt->attributes, &numatts);
-
-	// For each element in our linked list of attr_node, we need
-	// to ensure that the provided column exists in the provided
-	// relation. We also need to make sure the specified tables
-	// are one of our key three tables.
-	for (temp_head = head_node; temp_head; temp_head = temp_head->next) {
-		// Extra test case: were we only provided with a
-		// column name, and not a table to pair it with?
-		// If so, throw this error.
-		if (temp_head->colname == NULL)
-			ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("relation not specified for column \"%s\"",
-					temp_head->relation->relname)));
-		// Now test to make sure the relation exists.
-		if (!relationExists(temp_head->relation))
-			ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("relation \"%s\" does not exist",
-				 	temp_head->relation->relname)));
-		// Next, we test to see if the provided relation is one
-		// of the key two relations.
-		if ((strcmp(temp_head->relation->relname,recStmt->usertable->relname) != 0) &&
-			(strcmp(temp_head->relation->relname,recStmt->itemtable->relname) != 0)) {
-			ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("attribute \"%s.%s\" does not belong to appropriate relation",
-				 	temp_head->relation->relname,temp_head->colname)));
-		}
-		// Lastly, test to see if the column exists in
-		// the relation.
-		if (!columnExistsInRelation(temp_head->colname,temp_head->relation))
-			ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("column \"%s\" does not exist in relation \"%s\"",
-					temp_head->colname,temp_head->relation->relname)));
-	}
+				recStmt->eventval,recStmt->eventtable->relname)));
 
 	// Now we convert our method name.
 	method = itemCosCF;
@@ -1193,10 +865,8 @@ validateCreateRStmt(CreateRStmt *recStmt, recMethod *ret_method, int *ret_numatt
 					recStmt->method)));
 	}
 
-	// Return values.
-	(*ret_method) = method;
-	(*ret_numatts) = numatts;
-	return head_node;
+	// And return.
+	return method;
 }
 
 /* ----------------------------------------------------------------
@@ -1240,7 +910,7 @@ getUpdateThreshold() {
 	TupleTableSlot *slot;
 	MemoryContext recathoncontext;
 
-	testrv = makeRangeVar(NULL,"recathonproperties",0);
+	testrv = makeRangeVar(NULL,"recdbproperties",0);
 	if (!relationExists(testrv)) {
 		pfree(testrv);
 		return -1;
@@ -1248,7 +918,7 @@ getUpdateThreshold() {
 	pfree(testrv);
 
 	querystring = (char*) palloc(128*sizeof(char));
-	sprintf(querystring,"SELECT update_threshold FROM recathonproperties;");
+	sprintf(querystring,"SELECT update_threshold FROM recdbproperties;");
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
 
@@ -1268,61 +938,16 @@ getUpdateThreshold() {
 }
 
 /* ----------------------------------------------------------------
- *		getUserFromInsert
- *
- *		Given an insert into a ratings table, identify the
- *		user ID it applies to.
- * ----------------------------------------------------------------
- */
-static int
-getUserFromInsert(TupleTableSlot *insertslot, char *userkey) {
-	int i, natts;
-
-	slot_getallattrs(insertslot);
-	natts = insertslot->tts_tupleDescriptor->natts;
-
-	for (i = 0; i < natts; i++) {
-		if (!insertslot->tts_isnull[i]) {
-			char *col_name;
-			Datum slot_result;
-			// What we do depends on the column name.
-			col_name = insertslot->tts_tupleDescriptor->attrs[i]->attname.data;
-			slot_result = insertslot->tts_values[i];
-
-			// Is this our user key column?
-			if (strcmp(col_name,userkey) == 0) {
-				unsigned int data_type = insertslot->tts_tupleDescriptor->attrs[i]->atttypid;
-				// The data type will tell us what to do with it.
-				switch (data_type) {
-					case INT8OID:
-						return (int) DatumGetInt64(slot_result);
-					case INT2OID:
-						return (int) DatumGetInt16(slot_result);
-					case INT4OID:
-						return (int) DatumGetInt32(slot_result);
-					default:
-						// Error, try the next att. (Unlikely.)
-						break;
-				}
-			}
-		}
-	}
-
-	// Error, can't adjust cells.
-	return -1;
-}
-
-/* ----------------------------------------------------------------
  *		updateCellCounter
  *
  *		Happens whenever an INSERT occurs. If the insert
- *		is for a ratings table that we've built a
+ *		is for an events table that we've built a
  *		recommender on, we need to update the counters of
  *		the appropriate cells.
  * ----------------------------------------------------------------
  */
 void
-updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
+updateCellCounter(char *eventtable, TupleTableSlot *insertslot) {
 	float update_threshold;
 	RangeVar *cataloguerv;
 	// Query information.
@@ -1348,8 +973,8 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 	// exists, let's query it to find the necessary
 	// information.
 	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"SELECT * FROM RecModelsCatalogue WHERE ratingtable = '%s';",
-		ratingtable);
+	sprintf(querystring,"SELECT * FROM RecModelsCatalogue WHERE eventtable = '%s';",
+		eventtable);
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
 
@@ -1357,14 +982,10 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 		// In case of SVD, recmodelname is the user model, and the other is the
 		// item model. Otherwise, recmodelname2 is nothing.
 		char *recindexname, *recmodelname, *recmodelname2;
-		char *usertable, *itemtable;
-		char *userkey, *itemkey, *ratingval, *strmethod;
-		recMethod method;
-		char **attnames, **attvalues;
-		int i, userid;
-		int numatts = -1;
+		char *userkey, *itemkey, *eventval, *strmethod;
 		int updatecounter = -1;
-		int ratingtotal = -1;
+		int eventtotal = -1;
+		recMethod method;
 		// Query information for our internal query.
 		char *countquerystring;
 		QueryDesc *countqueryDesc;
@@ -1377,74 +998,22 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 
 		// Acquire the data for this recommender.
 		recindexname = getTupleString(slot,"recommenderindexname");
-		usertable = getTupleString(slot,"usertable");
-		itemtable = getTupleString(slot,"itemtable");
 		userkey = getTupleString(slot,"userkey");
 		itemkey = getTupleString(slot,"itemkey");
-		ratingval = getTupleString(slot,"ratingval");
+		eventval = getTupleString(slot,"eventval");
 		strmethod = getTupleString(slot,"method");
-		numatts = getTupleInt(slot,"contextattributes");
 
 		// Get the recMethod.
 		method = getRecMethod(strmethod);
 		pfree(strmethod);
 
 		// Failure case, continue to next tuple.
-		if (numatts < 0 || method < 0) {
+		if (method < 0) {
 			pfree(recindexname);
-			pfree(usertable);
-			pfree(itemtable);
 			pfree(userkey);
 			pfree(itemkey);
-			pfree(ratingval);
+			pfree(eventval);
 			continue;
-		}
-
-		// Now that we have the recommender using this table, we need to
-		// obtain the context attributes, if there are any, and query
-		// the user table for the values.
-		if (numatts > 0) {
-			// We need to use the insertslot we got from the INSERT
-			// command to determine the user ID.
-			userid = getUserFromInsert(insertslot, userkey);
-
-			// Failure condition.
-			if (userid < 0) {
-				pfree(recindexname);
-				pfree(usertable);
-				pfree(itemtable);
-				pfree(userkey);
-				pfree(itemkey);
-				pfree(ratingval);
-				continue;
-			}
-
-			attnames = getAttNames(recindexname, numatts, method);
-			attvalues = getAttValues(usertable, userkey, attnames, numatts, userid);
-
-			// Failure condition again.
-			if (!attnames || !attvalues) {
-				if (attnames) {
-					for (i = 0; i < numatts; i++)
-						pfree(attnames[i]);
-					pfree(attnames);
-				}
-				if (attvalues) {
-					for (i = 0; i < numatts; i++)
-						pfree(attvalues[i]);
-					pfree(attvalues);
-				}
-				pfree(recindexname);
-				pfree(usertable);
-				pfree(itemtable);
-				pfree(userkey);
-				pfree(itemkey);
-				pfree(ratingval);
-				continue;
-			}
-		} else {
-			attnames = NULL;
-			attvalues = NULL;
 		}
 
 		// We now have all the information necessary to update this
@@ -1452,23 +1021,11 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 		// and we might as well get the model name while we're at it.
 		countquerystring = (char*) palloc(1024*sizeof(char));
 		if (method == SVD)
-			sprintf(countquerystring,"SELECT recusermodelname, recitemmodelname, updatecounter, ratingtotal FROM %s",
+			sprintf(countquerystring,"SELECT recusermodelname, recitemmodelname, updatecounter, eventtotal FROM %s;",
 				recindexname);
 		else
-			sprintf(countquerystring,"SELECT recmodelname, updatecounter, ratingtotal FROM %s",
+			sprintf(countquerystring,"SELECT recmodelname, updatecounter, eventtotal FROM %s;",
 				recindexname);
-		// Add in attributes, if necessary.
-		if (numatts > 0) {
-			strncat(countquerystring," WHERE ",7);
-			for (i = 0; i < numatts; i++) {
-				char addition[256];
-				sprintf(addition,"%s = '%s'",attnames[i],attvalues[i]);
-				strncat(countquerystring,addition,strlen(addition));
-				if (i+1 < numatts)
-					strncat(countquerystring," AND ",5);
-			}
-		}
-		strncat(countquerystring,";",1);
 
 		countqueryDesc = recathon_queryStart(countquerystring,&countcontext);
 		countplanstate = countqueryDesc->planstate;
@@ -1480,18 +1037,10 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 			// because the INSERT still needs to happen.
 			recathon_queryEnd(countqueryDesc,countcontext);
 			pfree(countquerystring);
-			for (i = 0; i < numatts; i++)
-				pfree(attnames[i]);
-			pfree(attnames);
-			for (i = 0; i < numatts; i++)
-				pfree(attvalues[i]);
-			pfree(attvalues);
 			pfree(recindexname);
-			pfree(usertable);
-			pfree(itemtable);
 			pfree(userkey);
 			pfree(itemkey);
-			pfree(ratingval);
+			pfree(eventval);
 			continue;
 		}
 
@@ -1504,7 +1053,7 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 			recmodelname2 = NULL;
 		}
 		updatecounter = getTupleInt(countslot,"updatecounter");
-		ratingtotal = getTupleInt(countslot,"ratingtotal");
+		eventtotal = getTupleInt(countslot,"eventtotal");
 
 		recathon_queryEnd(countqueryDesc,countcontext);
 		pfree(countquerystring);
@@ -1514,28 +1063,20 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 			pfree(recmodelname);
 			if (recmodelname2)
 				pfree(recmodelname2);
-			for (i = 0; i < numatts; i++)
-				pfree(attnames[i]);
-			pfree(attnames);
-			for (i = 0; i < numatts; i++)
-				pfree(attvalues[i]);
-			pfree(attvalues);
 			pfree(recindexname);
-			pfree(usertable);
-			pfree(itemtable);
 			pfree(userkey);
 			pfree(itemkey);
 			continue;
 		}
 
 		// With that done, we check the original counter. If the
-		// number of new ratings is greater than threshold * the
-		// number of ratings currently used in the model, we need
+		// number of new events is greater than threshold * the
+		// number of events currently used in the model, we need
 		// to trigger an update. Otherwise, just increment.
 		updatecounter++;
 
-		if (updatecounter >= (int) (update_threshold * ratingtotal)) {
-			int numRatings = 0;
+		if (updatecounter >= (int) (update_threshold * eventtotal)) {
+			int numEvents = 0;
 
 			// What we do depends on the recommendation method.
 			switch (method) {
@@ -1547,12 +1088,12 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 					int *IDs;
 					float *lengths;
 
-					lengths = vector_lengths(itemtable, itemkey, ratingtable, ratingval,
+					lengths = vector_lengths(itemkey, eventtable, eventval,
 						&numItems, &IDs);
 
 					// Now update the similarity model.
-					numRatings = updateItemCosModel(usertable, itemtable, ratingtable, userkey,
-						itemkey, ratingval, recmodelname, numatts, attnames, attvalues,
+					numEvents = updateItemCosModel(eventtable, userkey,
+						itemkey, eventval, recmodelname,
 						IDs, lengths, numItems, true);
 					}
 					break;
@@ -1564,12 +1105,12 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 					int *IDs;
 					float *avgs, *pearsons;
 
-					pearson_info(itemtable, itemkey, ratingtable, ratingval, &numItems,
+					pearson_info(itemkey, eventtable, eventval, &numItems,
 							&IDs, &avgs, &pearsons);
 
 					// Now update the similarity model.
-					numRatings = updateItemPearModel(usertable, itemtable, ratingtable, userkey,
-						itemkey, ratingval, recmodelname, numatts, attnames, attvalues,
+					numEvents = updateItemPearModel(eventtable, userkey,
+						itemkey, eventval, recmodelname,
 						IDs, avgs, pearsons, numItems, true);
 					}
 					break;
@@ -1581,12 +1122,12 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 					int *IDs;
 					float *lengths;
 
-					lengths = vector_lengths(usertable, userkey, ratingtable, ratingval,
+					lengths = vector_lengths(userkey, eventtable, eventval,
 						&numUsers, &IDs);
 
 					// Now update the similarity model.
-					numRatings = updateUserCosModel(usertable, itemtable, ratingtable, userkey,
-						itemkey, ratingval, recmodelname, numatts, attnames, attvalues,
+					numEvents = updateUserCosModel(eventtable, userkey,
+						itemkey, eventval, recmodelname,
 						IDs, lengths, numUsers, true);
 					}
 					break;
@@ -1598,42 +1139,30 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 					int *IDs;
 					float *avgs, *pearsons;
 
-					pearson_info(usertable, userkey, ratingtable, ratingval, &numUsers,
+					pearson_info(userkey, eventtable, eventval, &numUsers,
 							&IDs, &avgs, &pearsons);
 
 					// Now update the similarity model.
-					numRatings = updateUserPearModel(usertable, itemtable, ratingtable, userkey,
-						itemkey, ratingval, recmodelname, numatts, attnames, attvalues,
+					numEvents = updateUserPearModel(eventtable, userkey,
+						itemkey, eventval, recmodelname,
 						IDs, avgs, pearsons, numUsers, true);
 					}
 					break;
 				case SVD:
 					// No additional functions, just update the model.
-					numRatings = SVDsimilarity(usertable, userkey, itemtable, itemkey,
-						ratingtable, ratingval, recmodelname, recmodelname2, attnames,
-						attvalues, numatts, true);
+					numEvents = SVDtrain(userkey, itemkey,
+						eventtable, eventval,
+						recmodelname, recmodelname2, true);
 					break;
 				default:
 					break;
 			}
 
-			// Finally, we update the cell to indicate how many ratings were used
+			// Finally, we update the cell to indicate how many events were used
 			// to build it. We'll also reset the updatecounter.
 			countquerystring = (char*) palloc(1024*sizeof(char));
-			sprintf(countquerystring,"UPDATE %s SET updatecounter = 0, ratingtotal = %d",
-							recindexname,numRatings);
-			// Add in attributes, if necessary.
-			if (numatts > 0) {
-				strncat(countquerystring," WHERE ",7);
-				for (i = 0; i < numatts; i++) {
-					char addition[256];
-					sprintf(addition,"%s = '%s'",attnames[i],attvalues[i]);
-					strncat(countquerystring,addition,strlen(addition));
-					if (i+1 < numatts)
-						strncat(countquerystring," AND ",5);
-				}
-			}
-			strncat(countquerystring,";",1);
+			sprintf(countquerystring,"UPDATE %s SET updatecounter = 0, eventtotal = %d;",
+							recindexname,numEvents);
 
 			// Execute normally, we don't need to see results.
 			recathon_queryExecute(countquerystring);
@@ -1641,20 +1170,8 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 		} else {
 			// Just increment.
 			countquerystring = (char*) palloc(1024*sizeof(char));
-			sprintf(countquerystring,"UPDATE %s SET updatecounter = updatecounter+1",
+			sprintf(countquerystring,"UPDATE %s SET updatecounter = updatecounter+1;",
 							recindexname);
-			// Add in attributes, if necessary.
-			if (numatts > 0) {
-				strncat(countquerystring," WHERE ",7);
-				for (i = 0; i < numatts; i++) {
-					char addition[256];
-					sprintf(addition,"%s = '%s'",attnames[i],attvalues[i]);
-					strncat(countquerystring,addition,strlen(addition));
-					if (i+1 < numatts)
-						strncat(countquerystring," AND ",5);
-				}
-			}
-			strncat(countquerystring,";",1);
 			// Execute normally, we don't need to see results.
 			recathon_queryExecute(countquerystring);
 			pfree(countquerystring);
@@ -1664,18 +1181,10 @@ updateCellCounter(char *ratingtable, TupleTableSlot *insertslot) {
 		pfree(recmodelname);
 		if (recmodelname2)
 			pfree(recmodelname2);
-		for (i = 0; i < numatts; i++)
-			pfree(attnames[i]);
-		pfree(attnames);
-		for (i = 0; i < numatts; i++)
-			pfree(attvalues[i]);
-		pfree(attvalues);
 		pfree(recindexname);
-		pfree(usertable);
-		pfree(itemtable);
 		pfree(userkey);
 		pfree(itemkey);
-		pfree(ratingval);
+		pfree(eventval);
 	}
 
 	recathon_queryEnd(queryDesc,recathoncontext);
@@ -1714,10 +1223,10 @@ binarySearch(int *array, int value, int lo, int hi) {
  * ----------------------------------------------------------------
  */
 float*
-vector_lengths(char *tablename, char *key, char *ratingtable, char *ratingval, int *totalNum, int **IDlist) {
+vector_lengths(char *key, char *eventtable, char *eventval, int *totalNum, int **IDlist) {
 	int *IDs;
 	float *lengths;
-	int i, j, numItems;
+	int i, j, numItems, priorID;
 	// Objects for querying.
 	char *querystring;
 	QueryDesc *queryDesc;
@@ -1725,9 +1234,15 @@ vector_lengths(char *tablename, char *key, char *ratingtable, char *ratingval, i
 	TupleTableSlot *slot;
 	MemoryContext recathoncontext;
 
-	// We start by getting the number of items, which is the number of
-	// rows in the item table.
-	numItems = count_rows(tablename);
+	// We start by getting the number of distinct items in the event table.
+	querystring = (char*) palloc(1024*sizeof(char));
+	sprintf(querystring,"SELECT COUNT(DISTINCT %s) FROM %s;",
+		key,eventtable);
+	queryDesc = recathon_queryStart(querystring,&recathoncontext);
+	planstate = queryDesc->planstate;
+	slot = ExecProcNode(planstate);
+	numItems = getTupleInt(slot,"count");
+	recathon_queryEnd(queryDesc,recathoncontext);
 
 	// Now that we have the number of items, we can create an array or two.
 	IDs = (int*) palloc(numItems*sizeof(int));
@@ -1735,63 +1250,41 @@ vector_lengths(char *tablename, char *key, char *ratingtable, char *ratingval, i
 	for (j = 0; j < numItems; j++)
 		lengths[j] = 0.0;
 
-	// Now we need to populate the array, first with item IDs.
-	querystring = (char*) palloc(256*sizeof(char));
-	sprintf(querystring,"SELECT DISTINCT %s FROM %s ORDER BY %s;",
-		key,tablename,key);
+	// Now we need to populate the two arrays. We'll get all the events from
+	// the events table.
+	priorID = -1;
+	sprintf(querystring,"SELECT * FROM %s ORDER BY %s;",eventtable,key);
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
-	i = 0;
+	i = -1;
 
 	// This query grabs all item IDs, so we can store them. Later we'll calculate
 	// vector lengths.
 	for (;;) {
+		int currentID = 0;
+		float currentEvent = 0.0;
+
 		slot = ExecProcNode(planstate);
 		if (TupIsNull(slot)) break;
 
-		IDs[i] = getTupleInt(slot,key);
+		currentID = getTupleInt(slot,key);
 
-		// Increment and continue.
-		i++;
+		// Are we dealing with a new item ID? If so, switch to the next slot.
+		if (currentID != priorID) {
+			i++;
+			priorID = currentID;
+			IDs[i] = currentID;
+		}
+
+		currentEvent = getTupleFloat(slot,eventval);
+		lengths[i] += currentEvent*currentEvent;
 	}
 
 	// Query cleanup.
 	recathon_queryEnd(queryDesc,recathoncontext);
 	pfree(querystring);
 
-	// Now that we have all of the item IDs, a third query will
-	// allow us to calculate vector lengths.
-	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"SELECT * FROM %s;", ratingtable);
-	queryDesc = recathon_queryStart(querystring,&recathoncontext);
-	planstate = queryDesc->planstate;
-
-	// We scan through the entire rating table once, sorting the ratings
-	// based on which user/item they apply to.
-	for (;;) {
-		int itemnum, itemindex;
-		float rating;
-
-		itemnum = 0; rating = 0.0;
-
-		slot = ExecProcNode(planstate);
-		if (TupIsNull(slot)) break;
-
-		itemnum = getTupleInt(slot,key);
-		rating = getTupleFloat(slot,ratingval);
-
-		// We have the item number and rating value from this tuple.
-		// Now we need to update scores.
-		itemindex = binarySearch(IDs, itemnum, 0, numItems);
-		if (itemindex < 0) continue;
-		lengths[itemindex] += rating*rating;
-	}
-
-	// Query cleanup.
-	recathon_queryEnd(queryDesc,recathoncontext);
-	pfree(querystring);
-
-	// Now that we've totally queried the ratings table, we need to
+	// Now that we've totally queried the events table, we need to
 	// take the square root of each length and we're done.
 	for (i = 0; i < numItems; i++)
 		lengths[i] = sqrtf(lengths[i]);
@@ -1821,12 +1314,12 @@ dotProduct(sim_node item1, sim_node item2) {
 
 	similarity = 0.0;
 
-	// Check every rating for the first item, and see how
+	// Check every event for the first item, and see how
 	// many of those users also rated the second item.
 	temp1 = item1; temp2 = item2;
 	while (temp1 && temp2) {
 		if (temp1->id == temp2->id) {
-			similarity += temp1->rating * temp2->rating;
+			similarity += temp1->event * temp2->event;
 			temp1 = temp1->next;
 			temp2 = temp2->next;
 		} else if (temp1->id > temp2->id) {
@@ -1851,7 +1344,7 @@ cosineSimilarity(sim_node item1, sim_node item2, float length1, float length2) {
 	float numerator;
 	float denominator;
 
-	// Short-circuit check. If one of the items has no ratings,
+	// Short-circuit check. If one of the items has no events,
 	// no point checking similarity. This also avoids a possible
 	// divide-by-zero error.
 	denominator = length1 * length2;
@@ -1868,17 +1361,17 @@ cosineSimilarity(sim_node item1, sim_node item2, float length1, float length2) {
  *		Given a single cell of a recommender, this
  *		function rebuilds the recModel for that cell, using
  *		item-based collaborative filtering with cosine
- *		similarity. Returns the number of ratings used.
+ *		similarity. Returns the number of events used.
  * ----------------------------------------------------------------
  */
 int
-updateItemCosModel(char *usertable, char *itemtable, char *ratingtable, char *userkey, char *itemkey,
-		char *ratingval, char *modelname, int numatts, char **attnames, char **attvalues,
-		int *itemIDs, float *itemLengths, int numItems, bool update) {
-	int i, j;
-	int numRatings = 0;
+updateItemCosModel(char *eventtable, char *userkey, char *itemkey,
+		char *eventval, char *modelname, int *itemIDs, float *itemLengths,
+		int numItems, bool update) {
+	int i, j, priorID;
+	int numEvents = 0;
 	char *querystring, *insertstring, *temprecfile;
-	sim_node *itemRatings;
+	sim_node *itemEvents;
 	// Information for other queries.
 	QueryDesc *simqueryDesc;
 	PlanState *simplanstate;
@@ -1905,69 +1398,51 @@ updateItemCosModel(char *usertable, char *itemtable, char *ratingtable, char *us
 	// of I/Os and also the amount of storage. The complexity is relegated
 	// to in-memory calculations, which is the most affordable. We need to
 	// use this data structure here.
-	itemRatings = (sim_node*) palloc(numItems*sizeof(sim_node));
+	itemEvents = (sim_node*) palloc(numItems*sizeof(sim_node));
 	for (i = 0; i < numItems; i++)
-		itemRatings[i] = NULL;
+		itemEvents[i] = NULL;
 
 	// With the model created, we need to populate it, which means calculating
-	// similarity between all item pairs. We need to query the ratings table
+	// similarity between all item pairs. We need to query the events table
 	// in order to get the key information. We'll also keep track of the number
-	// of ratings used, since we need to store that information.
+	// of events used, since we need to store that information.
 	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r",
-		userkey,itemkey,ratingval,ratingtable);
-	// An optional join.
-	if (numatts > 0) {
-		char addition[512];
-		sprintf(addition,", %s u WHERE u.%s=r.%s",usertable,userkey,userkey);
-		strncat(querystring,addition,strlen(addition));
-	}
-	// Add in attribute information.
-	for (i = 0; i < numatts; i++) {
-		char addition[512];
-		sprintf(addition," AND u.%s = '%s'",attnames[i],attvalues[i]);
-		strncat(querystring,addition,strlen(addition));
-	}
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r ORDER BY r.%s;",
+		userkey,itemkey,eventval,eventtable,itemkey);
 
-	// Add the final "ORDER BY".
-	strncat(querystring," ORDER BY r.",12);
-	strncat(querystring,userkey,strlen(userkey));
-	strncat(querystring,";",1);
 	// Begin extracting data.
+	priorID = -1;
 	simqueryDesc = recathon_queryStart(querystring, &simcontext);
 	simplanstate = simqueryDesc->planstate;
+	i = -1;
 
 	for (;;) {
-		int simuser, simitem, simindex;
-		float simrating;
+		int simuser, simitem;
+		float simevent;
 		sim_node newnode;
 
 		// Shut the compiler up.
-		simuser = 0; simitem = 0; simrating = 0.0;
+		simuser = 0; simitem = 0; simevent = 0.0;
 
 		simslot = ExecProcNode(simplanstate);
 		if (TupIsNull(simslot)) break;
 
 		simuser = getTupleInt(simslot,userkey);
 		simitem = getTupleInt(simslot,itemkey);
-		simrating = getTupleFloat(simslot,ratingval);
+		simevent = getTupleFloat(simslot,eventval);
 
-		// We now have the user, item, and rating for this tuple.
-		// We insert the results as a sim_node into the
-		// itemRatings table; we'll do calculations later.
-		newnode = createSimNode(simuser, simrating);
-		simindex = binarySearch(itemIDs, simitem, 0, numItems);
-		// It's unlikely, but possible, that the binary search will
-		// return nothing. This means that we've found a rating on an
-		// item that isn't actually in our item list. It's unclear how
-		// this might happen, but it has before, so we need to address
-		// it.
-		if (simindex < 0)
-			pfree(newnode);
-		else {
-			itemRatings[simindex] = simInsert(itemRatings[simindex], newnode);
-			numRatings++;
+		// Are we dealing with a new item ID? If so, switch to the next slot.
+		if (simitem != priorID) {
+			priorID = simitem;
+			i++;
 		}
+
+		// We now have the user, item, and event for this tuple.
+		// We insert the results as a sim_node into the
+		// itemEvents table; we'll do calculations later.
+		newnode = createSimNode(simuser, simevent);
+		itemEvents[i] = simInsert(itemEvents[i], newnode);
+		numEvents++;
 	}
 
 	// Query cleanup.
@@ -1989,7 +1464,7 @@ updateItemCosModel(char *usertable, char *itemtable, char *ratingtable, char *us
 		nbr_node temp_nbr;
 		nbr_node nbr_list = NULL;
 
-		item_i = itemRatings[i];
+		item_i = itemEvents[i];
 		if (!item_i) continue;
 		length_i = itemLengths[i];
 
@@ -1999,7 +1474,7 @@ updateItemCosModel(char *usertable, char *itemtable, char *ratingtable, char *us
 			int item1, item2;
 			float similarity;
 
-			item_j = itemRatings[j];
+			item_j = itemEvents[j];
 			if (!item_j) continue;
 			length_j = itemLengths[j];
 
@@ -2067,19 +1542,19 @@ updateItemCosModel(char *usertable, char *itemtable, char *ratingtable, char *us
 
 	// Free up the lists of sim_nodes and start again.
 	for (i = 0; i < numItems; i++) {
-		freeSimList(itemRatings[i]);
-		itemRatings[i] = NULL;
+		freeSimList(itemEvents[i]);
+		itemEvents[i] = NULL;
 	}
 
-	// Return the number of ratings we used.
-	return numRatings;
+	// Return the number of events we used.
+	return numEvents;
 }
 
 /* ----------------------------------------------------------------
  *		pearson_info
  *
  *		Looks at all the items in our users/items table and
- *		calculates their average ratings, as well as
+ *		calculates their average events, as well as
  *		another data item useful for Pearson correlation,
  *		which I'm just calling a Pearson because I'm not
  *		sure it has a name. It can be pre-calculated, so we
@@ -2087,11 +1562,11 @@ updateItemCosModel(char *usertable, char *itemtable, char *ratingtable, char *us
  * ----------------------------------------------------------------
  */
 void
-pearson_info(char *tablename, char *key, char *ratingtable, char *ratingval,
-		int *totalNum, int **IDlist, float **avgList, float **pearsonList) {
+pearson_info(char *key, char *eventtable, char *eventval, int *totalNum,
+		int **IDlist, float **avgList, float **pearsonList) {
 	int *IDs, *counts;
 	float *avgs, *pearsons;
-	int i, j, numItems;
+	int i, j, numItems, priorID;
 	// Objects for querying.
 	char *querystring;
 	QueryDesc *queryDesc;
@@ -2099,9 +1574,15 @@ pearson_info(char *tablename, char *key, char *ratingtable, char *ratingval,
 	TupleTableSlot *slot;
 	MemoryContext recathoncontext;
 
-	// We start by getting the number of items, which is the number of
-	// rows in the item table.
-	numItems = count_rows(tablename);
+	// We start by getting the number of items in the event table.
+	querystring = (char*) palloc(1024*sizeof(char));
+	sprintf(querystring,"SELECT COUNT(DISTINCT %s) FROM %s;",
+		key,eventtable);
+	queryDesc = recathon_queryStart(querystring,&recathoncontext);
+	planstate = queryDesc->planstate;
+	slot = ExecProcNode(planstate);
+	numItems = getTupleInt(slot,"count");
+	recathon_queryEnd(queryDesc,recathoncontext);
 
 	// Now that we have the number of items, we can create an array or two.
 	IDs = (int*) palloc(numItems*sizeof(int));
@@ -2115,63 +1596,41 @@ pearson_info(char *tablename, char *key, char *ratingtable, char *ratingval,
 	for (j = 0; j < numItems; j++)
 		pearsons[j] = 0.0;
 
-	// Now we need to populate the array, first with item IDs.
-	querystring = (char*) palloc(256*sizeof(char));
-	sprintf(querystring,"SELECT DISTINCT %s FROM %s ORDER BY %s;",
-		key,tablename,key);
+	// Now we need to populate the four arrays. We'll get all the events from
+	// the events table.
+	priorID = -1;
+	sprintf(querystring,"SELECT * FROM %s ORDER BY %s;",eventtable,key);
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
-	i = 0;
+	i = -1;
 
-	// This query grabs all item IDs, so we can store them. Later we'll calculate
-	// averages and Pearsons.
+	// This query grabs all item IDs, so we can store them. It also fills in
+	// some other information we'll need.
 	for (;;) {
-		slot = ExecProcNode(planstate);
-		if (TupIsNull(slot)) break;
-
-		IDs[i] = getTupleInt(slot,key);
-
-		// Increment and continue.
-		i++;
-	}
-
-	// Query cleanup.
-	recathon_queryEnd(queryDesc,recathoncontext);
-	pfree(querystring);
-
-	// Now that we have all of the item IDs, a third query will
-	// allow us to calculate averages.
-	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"SELECT * FROM %s;", ratingtable);
-	queryDesc = recathon_queryStart(querystring,&recathoncontext);
-	planstate = queryDesc->planstate;
-
-	// We scan through the entire rating table once, sorting the ratings
-	// based on which item they apply to.
-	for (;;) {
-		int itemnum, itemindex;
-		float rating;
-
-		itemnum = 0; rating = 0.0;
+		int currentID = 0;
+		float currentEvent = 0.0;
 
 		slot = ExecProcNode(planstate);
 		if (TupIsNull(slot)) break;
 
-		itemnum = getTupleInt(slot,key);
-		rating = getTupleFloat(slot,ratingval);
+		currentID = getTupleInt(slot,key);
 
-		// We have the item number and rating value from this tuple.
-		// Now we need to update averages.
-		itemindex = binarySearch(IDs, itemnum, 0, numItems);
-		if (itemindex < 0) continue;
-		counts[itemindex] += 1;
-		avgs[itemindex] += rating;
+		// Are we dealing with a new item ID? If so, switch to the next slot.
+		if (currentID != priorID) {
+			i++;
+			priorID = currentID;
+			IDs[i] = currentID;
+		}
+
+		currentEvent = getTupleFloat(slot,eventval);
+		counts[i] += 1;
+		avgs[i] += currentEvent;
 	}
 
 	// Query cleanup.
 	recathon_queryEnd(queryDesc,recathoncontext);
 
-	// Now that we've totally queried the ratings table, we need to
+	// Now that we've totally queried the events table, we need to
 	// obtain the actual averages for each item.
 	for (i = 0; i < numItems; i++) {
 		if (counts[i] > 0)
@@ -2179,38 +1638,42 @@ pearson_info(char *tablename, char *key, char *ratingtable, char *ratingval,
 	}
 	pfree(counts);
 
-	// We can reuse the same query to obtain the ratings again, and
+	// We can reuse the same query to obtain the events again, and
 	// calculate Pearsons.
+	priorID = -1;
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
+	i = -1;
 
-	// We scan through the entire rating table once, sorting the ratings
+	// We scan through the entire event table once, sorting the events
 	// based on which item they apply to.
 	for (;;) {
-		int itemnum, itemindex;
-		float rating, difference;
-
-		itemnum = 0; rating = 0.0;
+		int currentID = 0;
+		float currentEvent = 0.0;
+		float difference = 0.0;
 
 		slot = ExecProcNode(planstate);
 		if (TupIsNull(slot)) break;
 
-		itemnum = getTupleInt(slot,key);
-		rating = getTupleFloat(slot,ratingval);
+		currentID = getTupleInt(slot,key);
+		// Are we dealing with a new item ID? If so, switch to the next slot.
+		if (currentID != priorID) {
+			priorID = currentID;
+			i++;
+		}
+		currentEvent = getTupleFloat(slot,eventval);
 
-		// We have the item number and rating value from this tuple.
+		// We have the item number and event value from this tuple.
 		// Now we need to update Pearsons.
-		itemindex = binarySearch(IDs, itemnum, 0, numItems);
-		if (itemindex < 0) continue;
-		difference = rating - avgs[itemindex];
-		pearsons[itemindex] += difference*difference;
+		difference = currentEvent - avgs[i];
+		pearsons[i] += difference*difference;
 	}
 
 	// Query cleanup.
 	recathon_queryEnd(queryDesc,recathoncontext);
 	pfree(querystring);
 
-	// Now that we've totally queried the ratings table, we need to
+	// Now that we've totally queried the events table, we need to
 	// take the square root of each Pearson and we're done.
 	for (i = 0; i < numItems; i++)
 		pearsons[i] = sqrtf(pearsons[i]);
@@ -2240,12 +1703,12 @@ pearsonDotProduct(sim_node item1, sim_node item2, float avg1, float avg2) {
 
 	similarity = 0.0;
 
-	// Check every rating for the first item, and see how
+	// Check every event for the first item, and see how
 	// many of those users also rated the second item.
 	temp1 = item1; temp2 = item2;
 	while (temp1 && temp2) {
 		if (temp1->id == temp2->id) {
-			similarity += (temp1->rating - avg1) * (temp2->rating - avg2);
+			similarity += (temp1->event - avg1) * (temp2->event - avg2);
 			temp1 = temp1->next;
 			temp2 = temp2->next;
 		} else if (temp1->id > temp2->id) {
@@ -2271,7 +1734,7 @@ pearsonSimilarity(sim_node item1, sim_node item2, float avg1, float avg2,
 	float numerator;
 	float denominator;
 
-	// Short-circuit check. If one of the items has no ratings,
+	// Short-circuit check. If one of the items has no events,
 	// no point checking similarity. This also avoids a possible
 	// divide-by-zero error.
 	denominator = pearson1 * pearson2;
@@ -2288,17 +1751,17 @@ pearsonSimilarity(sim_node item1, sim_node item2, float avg1, float avg2,
  *		Given a single cell of a recommender, this
  *		function rebuilds the recModel for that cell, using
  *		item-based collaborative filtering with Pearson
- *		similarity. Returns the number of ratings used.
+ *		similarity. Returns the number of events used.
  * ----------------------------------------------------------------
  */
 int
-updateItemPearModel(char *usertable, char *itemtable, char *ratingtable, char *userkey, char *itemkey,
-		char *ratingval, char *modelname, int numatts, char **attnames, char **attvalues,
-		int *itemIDs, float *itemAvgs, float *itemPearsons, int numItems, bool update) {
-	int i, j;
-	int numRatings = 0;
+updateItemPearModel(char *eventtable, char *userkey, char *itemkey,
+		char *eventval, char *modelname, int *itemIDs, float *itemAvgs,
+		float *itemPearsons, int numItems, bool update) {
+	int i, j, priorID;
+	int numEvents = 0;
 	char *querystring, *insertstring, *temprecfile;
-	sim_node *itemRatings;
+	sim_node *itemEvents;
 	// Information for other queries.
 	QueryDesc *simqueryDesc;
 	PlanState *simplanstate;
@@ -2325,69 +1788,50 @@ updateItemPearModel(char *usertable, char *itemtable, char *ratingtable, char *u
 	// of I/Os and also the amount of storage. The complexity is relegated
 	// to in-memory calculations, which is the most affordable. We need to
 	// use this data structure here.
-	itemRatings = (sim_node*) palloc(numItems*sizeof(sim_node));
+	itemEvents = (sim_node*) palloc(numItems*sizeof(sim_node));
 	for (i = 0; i < numItems; i++)
-		itemRatings[i] = NULL;
+		itemEvents[i] = NULL;
 
 	// With the model created, we need to populate it, which means calculating
-	// similarity between all item pairs. We need to query the ratings table
+	// similarity between all item pairs. We need to query the events table
 	// in order to get the key information.
 	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r",
-		userkey,itemkey,ratingval,ratingtable);
-	// An optional join.
-	if (numatts > 0) {
-		char addition[512];
-		sprintf(addition,", %s u WHERE u.%s=r.%s",usertable,userkey,userkey);
-		strncat(querystring,addition,strlen(addition));
-	}
-	// Add in attribute information.
-	for (i = 0; i < numatts; i++) {
-		char addition[512];
-		sprintf(addition," AND u.%s = '%s'",attnames[i],attvalues[i]);
-		strncat(querystring,addition,strlen(addition));
-	}
-
-	// Add the final "ORDER BY".
-	strncat(querystring," ORDER BY r.",12);
-	strncat(querystring,userkey,strlen(userkey));
-	strncat(querystring,";",1);
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r ORDER BY r.%s;",
+		userkey,itemkey,eventval,eventtable,itemkey);
 
 	// Begin extracting data.
+	priorID = -1;
 	simqueryDesc = recathon_queryStart(querystring, &simcontext);
 	simplanstate = simqueryDesc->planstate;
+	i = -1;
 
 	for (;;) {
-		int simuser, simitem, simindex;
-		float simrating;
+		int simuser, simitem;
+		float simevent;
 		sim_node newnode;
 
 		// Shut the compiler up.
-		simuser = 0; simitem = 0; simrating = 0.0;
+		simuser = 0; simitem = 0; simevent = 0.0;
 
 		simslot = ExecProcNode(simplanstate);
 		if (TupIsNull(simslot)) break;
 
 		simuser = getTupleInt(simslot,userkey);
 		simitem = getTupleInt(simslot,itemkey);
-		simrating = getTupleFloat(simslot,ratingval);
+		simevent = getTupleFloat(simslot,eventval);
 
-		// We now have the user, item, and rating for this tuple.
-		// We insert the results as a sim_node into the
-		// itemRatings table; we'll do calculations later.
-		newnode = createSimNode(simuser, simrating);
-		simindex = binarySearch(itemIDs, simitem, 0, numItems);
-		// It's unlikely, but possible, that the binary search will
-		// return nothing. This means that we've found a rating on an
-		// item that isn't actually in our item list. It's unclear how
-		// this might happen, but it has before, so we need to address
-		// it.
-		if (simindex < 0)
-			pfree(newnode);
-		else {
-			itemRatings[simindex] = simInsert(itemRatings[simindex], newnode);
-			numRatings++;
+		// Are we dealing with a new item ID? If so, switch to the next slot.
+		if (simitem != priorID) {
+			priorID = simitem;
+			i++;
 		}
+
+		// We now have the user, item, and event for this tuple.
+		// We insert the results as a sim_node into the
+		// itemEvents table; we'll do calculations later.
+		newnode = createSimNode(simuser, simevent);
+		itemEvents[i] = simInsert(itemEvents[i], newnode);
+		numEvents++;
 	}
 
 	// Query cleanup.
@@ -2410,7 +1854,7 @@ updateItemPearModel(char *usertable, char *itemtable, char *ratingtable, char *u
 		nbr_node temp_nbr;
 		nbr_node nbr_list = NULL;
 
-		item_i = itemRatings[i];
+		item_i = itemEvents[i];
 		if (!item_i) continue;
 		avg_i = itemAvgs[i];
 		pearson_i = itemPearsons[i];
@@ -2421,7 +1865,7 @@ updateItemPearModel(char *usertable, char *itemtable, char *ratingtable, char *u
 			int item1, item2;
 			float similarity;
 
-			item_j = itemRatings[j];
+			item_j = itemEvents[j];
 			if (!item_j) continue;
 			avg_j = itemAvgs[j];
 			pearson_j = itemPearsons[j];
@@ -2494,12 +1938,12 @@ updateItemPearModel(char *usertable, char *itemtable, char *ratingtable, char *u
 
 	// Free up the lists of sim_nodes and start again.
 	for (i = 0; i < numItems; i++) {
-		freeSimList(itemRatings[i]);
-		itemRatings[i] = NULL;
+		freeSimList(itemEvents[i]);
+		itemEvents[i] = NULL;
 	}
 
-	// Return the number of ratings we used.
-	return numRatings;
+	// Return the number of events we used.
+	return numEvents;
 }
 
 /* ----------------------------------------------------------------
@@ -2508,17 +1952,17 @@ updateItemPearModel(char *usertable, char *itemtable, char *ratingtable, char *u
  *		Given a single cell of a recommender, this
  *		function rebuilds the recModel for that cell, using
  *		user-based collaborative filtering with cosine
- *		similarity. Returns the number of ratings used.
+ *		similarity. Returns the number of events used.
  * ----------------------------------------------------------------
  */
 int
-updateUserCosModel(char *usertable, char *itemtable, char *ratingtable, char *userkey, char *itemkey,
-		char *ratingval, char *modelname, int numatts, char **attnames, char **attvalues,
-		int *userIDs, float *userLengths, int numUsers, bool update) {
-	int i, j;
-	int numRatings = 0;
+updateUserCosModel(char *eventtable, char *userkey, char *itemkey,
+		char *eventval, char *modelname, int *userIDs, float *userLengths,
+		int numUsers, bool update) {
+	int i, j, priorID;
+	int numEvents = 0;
 	char *querystring, *insertstring, *temprecfile;
-	sim_node *userRatings;
+	sim_node *userEvents;
 	// Information for other queries.
 	QueryDesc *simqueryDesc;
 	PlanState *simplanstate;
@@ -2545,69 +1989,50 @@ updateUserCosModel(char *usertable, char *itemtable, char *ratingtable, char *us
 	// of I/Os and also the amount of storage. The complexity is relegated
 	// to in-memory calculations, which is the most affordable. We need to
 	// use this data structure here.
-	userRatings = (sim_node*) palloc(numUsers*sizeof(sim_node));
+	userEvents = (sim_node*) palloc(numUsers*sizeof(sim_node));
 	for (i = 0; i < numUsers; i++)
-		userRatings[i] = NULL;
+		userEvents[i] = NULL;
 
 	// With the model created, we need to populate it, which means calculating
-	// similarity between all user pairs. We need to query the ratings table
+	// similarity between all user pairs. We need to query the events table
 	// in order to get the key information.
 	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r",
-		userkey,itemkey,ratingval,ratingtable);
-	// An optional join.
-	if (numatts > 0) {
-		char addition[512];
-		sprintf(addition,", %s u WHERE u.%s=r.%s",usertable,userkey,userkey);
-		strncat(querystring,addition,strlen(addition));
-	}
-	// Add in attribute information.
-	for (i = 0; i < numatts; i++) {
-		char addition[512];
-		sprintf(addition," AND u.%s = '%s'",attnames[i],attvalues[i]);
-		strncat(querystring,addition,strlen(addition));
-	}
-
-	// Add the final "ORDER BY".
-	strncat(querystring," ORDER BY r.",12);
-	strncat(querystring,userkey,strlen(userkey));
-	strncat(querystring,";",1);
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r ORDER BY r.%s;",
+		userkey,itemkey,eventval,eventtable,userkey);
 
 	// Begin extracting data.
+	priorID = -1;
 	simqueryDesc = recathon_queryStart(querystring, &simcontext);
 	simplanstate = simqueryDesc->planstate;
+	i = -1;
 
 	for (;;) {
-		int simuser, simitem, simindex;
-		float simrating;
+		int simuser, simitem;
+		float simevent;
 		sim_node newnode;
 
 		// Shut the compiler up.
-		simuser = 0; simitem = 0; simrating = 0.0;
+		simuser = 0; simitem = 0; simevent = 0.0;
 
 		simslot = ExecProcNode(simplanstate);
 		if (TupIsNull(simslot)) break;
 
 		simuser = getTupleInt(simslot,userkey);
 		simitem = getTupleInt(simslot,itemkey);
-		simrating = getTupleFloat(simslot,ratingval);
+		simevent = getTupleFloat(simslot,eventval);
 
-		// We now have the user, item, and rating for this tuple.
-		// We insert the results as a sim_node into the
-		// userRatings table; we'll do calculations later.
-		newnode = createSimNode(simitem, simrating);
-		simindex = binarySearch(userIDs, simuser, 0, numUsers);
-		// It's unlikely, but possible, that the binary search will
-		// return nothing. This means that we've found a rating on an
-		// item that isn't actually in our item list. It's unclear how
-		// this might happen, but it has before, so we need to address
-		// it.
-		if (simindex < 0)
-			pfree(newnode);
-		else {
-			userRatings[simindex] = simInsert(userRatings[simindex], newnode);
-			numRatings++;
+		// Are we dealing with a new user ID? If so, switch to the next slot.
+		if (simuser != priorID) {
+			priorID = simuser;
+			i++;
 		}
+
+		// We now have the user, item, and event for this tuple.
+		// We insert the results as a sim_node into the
+		// userEvents table; we'll do calculations later.
+		newnode = createSimNode(simitem, simevent);
+		userEvents[i] = simInsert(userEvents[i], newnode);
+		numEvents++;
 	}
 
 	// Query cleanup.
@@ -2630,7 +2055,7 @@ updateUserCosModel(char *usertable, char *itemtable, char *ratingtable, char *us
 		nbr_node temp_nbr;
 		nbr_node nbr_list = NULL;
 
-		user_i = userRatings[i];
+		user_i = userEvents[i];
 		if (!user_i) continue;
 		length_i = userLengths[i];
 
@@ -2640,7 +2065,7 @@ updateUserCosModel(char *usertable, char *itemtable, char *ratingtable, char *us
 			int user1, user2;
 			float similarity;
 
-			user_j = userRatings[j];
+			user_j = userEvents[j];
 			if (!user_j) continue;
 			length_j = userLengths[j];
 
@@ -2712,12 +2137,12 @@ updateUserCosModel(char *usertable, char *itemtable, char *ratingtable, char *us
 
 	// Free up the lists of sim_nodes and start again.
 	for (i = 0; i < numUsers; i++) {
-		freeSimList(userRatings[i]);
-		userRatings[i] = NULL;
+		freeSimList(userEvents[i]);
+		userEvents[i] = NULL;
 	}
 
-	// Return the number of ratings we used.
-	return numRatings;
+	// Return the number of events we used.
+	return numEvents;
 }
 
 /* ----------------------------------------------------------------
@@ -2726,17 +2151,17 @@ updateUserCosModel(char *usertable, char *itemtable, char *ratingtable, char *us
  *		Given a single cell of a recommender, this
  *		function rebuilds the recModel for that cell, using
  *		user-based collaborative filtering with Pearson
- *		similarity. Returns the number of ratings used.
+ *		similarity. Returns the number of events used.
  * ----------------------------------------------------------------
  */
 int
-updateUserPearModel(char *usertable, char *itemtable, char *ratingtable, char *userkey, char *itemkey,
-		char *ratingval, char *modelname, int numatts, char **attnames, char **attvalues,
-		int *userIDs, float *userAvgs, float *userPearsons, int numUsers, bool update) {
-	int i, j;
-	int numRatings = 0;
+updateUserPearModel(char *eventtable, char *userkey, char *itemkey,
+		char *eventval, char *modelname, int *userIDs, float *userAvgs,
+		float *userPearsons, int numUsers, bool update) {
+	int i, j, priorID;
+	int numEvents = 0;
 	char *querystring, *insertstring, *temprecfile;
-	sim_node *userRatings;
+	sim_node *userEvents;
 	// Information for other queries.
 	QueryDesc *simqueryDesc;
 	PlanState *simplanstate;
@@ -2763,69 +2188,50 @@ updateUserPearModel(char *usertable, char *itemtable, char *ratingtable, char *u
 	// of I/Os and also the amount of storage. The complexity is relegated
 	// to in-memory calculations, which is the most affordable. We need to
 	// use this data structure here.
-	userRatings = (sim_node*) palloc(numUsers*sizeof(sim_node));
+	userEvents = (sim_node*) palloc(numUsers*sizeof(sim_node));
 	for (i = 0; i < numUsers; i++)
-		userRatings[i] = NULL;
+		userEvents[i] = NULL;
 
 	// With the model created, we need to populate it, which means calculating
-	// similarity between all item pairs. We need to query the ratings table
+	// similarity between all item pairs. We need to query the events table
 	// in order to get the key information.
 	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r",
-		userkey,itemkey,ratingval,ratingtable);
-	// An optional join.
-	if (numatts > 0) {
-		char addition[512];
-		sprintf(addition,", %s u WHERE u.%s=r.%s",usertable,userkey,userkey);
-		strncat(querystring,addition,strlen(addition));
-	}
-	// Add in attribute information.
-	for (i = 0; i < numatts; i++) {
-		char addition[512];
-		sprintf(addition," AND u.%s = '%s'",attnames[i],attvalues[i]);
-		strncat(querystring,addition,strlen(addition));
-	}
-
-	// Add the final "ORDER BY".
-	strncat(querystring," ORDER BY r.",12);
-	strncat(querystring,userkey,strlen(userkey));
-	strncat(querystring,";",1);
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r ORDER BY r.%s;",
+		userkey,itemkey,eventval,eventtable,userkey);
 
 	// Begin extracting data.
+	priorID = -1;
 	simqueryDesc = recathon_queryStart(querystring, &simcontext);
 	simplanstate = simqueryDesc->planstate;
+	i = -1;
 
 	for (;;) {
-		int simuser, simitem, simindex;
-		float simrating;
+		int simuser, simitem;
+		float simevent;
 		sim_node newnode;
 
 		// Shut the compiler up.
-		simuser = 0; simitem = 0; simrating = 0.0;
+		simuser = 0; simitem = 0; simevent = 0.0;
 
 		simslot = ExecProcNode(simplanstate);
 		if (TupIsNull(simslot)) break;
 
 		simuser = getTupleInt(simslot,userkey);
 		simitem = getTupleInt(simslot,itemkey);
-		simrating = getTupleFloat(simslot,ratingval);
+		simevent = getTupleFloat(simslot,eventval);
 
-		// We now have the user, item, and rating for this tuple.
-		// We insert the results as a sim_node into the
-		// itemRatings table; we'll do calculations later.
-		newnode = createSimNode(simitem, simrating);
-		simindex = binarySearch(userIDs, simuser, 0, numUsers);
-		// It's unlikely, but possible, that the binary search will
-		// return nothing. This means that we've found a rating on an
-		// item that isn't actually in our item list. It's unclear how
-		// this might happen, but it has before, so we need to address
-		// it.
-		if (simindex < 0)
-			pfree(newnode);
-		else {
-			userRatings[simindex] = simInsert(userRatings[simindex], newnode);
-			numRatings++;
+		// Are we dealing with a new user ID? If so, switch to the next slot.
+		if (simuser != priorID) {
+			priorID = simuser;
+			i++;
 		}
+
+		// We now have the user, item, and event for this tuple.
+		// We insert the results as a sim_node into the
+		// userEvents table; we'll do calculations later.
+		newnode = createSimNode(simitem, simevent);
+		userEvents[i] = simInsert(userEvents[i], newnode);
+		numEvents++;
 	}
 
 	// Query cleanup.
@@ -2848,7 +2254,7 @@ updateUserPearModel(char *usertable, char *itemtable, char *ratingtable, char *u
 		nbr_node temp_nbr;
 		nbr_node nbr_list = NULL;
 
-		user_i = userRatings[i];
+		user_i = userEvents[i];
 		if (!user_i) continue;
 		avg_i = userAvgs[i];
 		pearson_i = userPearsons[i];
@@ -2859,7 +2265,7 @@ updateUserPearModel(char *usertable, char *itemtable, char *ratingtable, char *u
 			int user1, user2;
 			float similarity;
 
-			user_j = userRatings[j];
+			user_j = userEvents[j];
 			if (!user_j) continue;
 			avg_j = userAvgs[j];
 			pearson_j = userPearsons[j];
@@ -2932,12 +2338,12 @@ updateUserPearModel(char *usertable, char *itemtable, char *ratingtable, char *u
 
 	// Free up the lists of sim_nodes and start again.
 	for (i = 0; i < numUsers; i++) {
-		freeSimList(userRatings[i]);
-		userRatings[i] = NULL;
+		freeSimList(userEvents[i]);
+		userEvents[i] = NULL;
 	}
 
-	// Return the number of ratings we used.
-	return numRatings;
+	// Return the number of events we used.
+	return numEvents;
 }
 
 /* ----------------------------------------------------------------
@@ -2947,7 +2353,7 @@ updateUserPearModel(char *usertable, char *itemtable, char *ratingtable, char *u
  *		TupleTableSlot.
  * ----------------------------------------------------------------
  */
-svd_node createSVDnode(TupleTableSlot *slot, char *userkey, char *itemkey, char *ratingval,
+svd_node createSVDnode(TupleTableSlot *slot, char *userkey, char *itemkey, char *eventval,
 				int *userIDs, int *itemIDs, int numUsers, int numItems) {
 	int userid, itemid;
 	svd_node new_svd;
@@ -2960,12 +2366,12 @@ svd_node createSVDnode(TupleTableSlot *slot, char *userkey, char *itemkey, char 
 	// Default values.
 	new_svd->userid = -1;
 	new_svd->itemid = -1;
-	new_svd->rating = -1;
+	new_svd->event = -1;
 	new_svd->residual = 0.0;
 
 	userid = getTupleInt(slot,userkey);
 	itemid = getTupleInt(slot,itemkey);
-	new_svd->rating = getTupleFloat(slot,ratingval);
+	new_svd->event = getTupleFloat(slot,eventval);
 
 	// If we convert IDs to indexes in our arrays, it will make
 	// our lives easier.
@@ -2983,8 +2389,8 @@ svd_node createSVDnode(TupleTableSlot *slot, char *userkey, char *itemkey, char 
  * ----------------------------------------------------------------
  */
 void
-SVDlists(char *usertable, char *userkey, char *itemtable, char *itemkey,
-		int numatts, char **attnames, char **attvalues, int **ret_userIDs, int **ret_itemIDs,
+SVDlists(char *userkey, char *itemkey, char *eventtable,
+		int **ret_userIDs, int **ret_itemIDs,
 		int *ret_numUsers, int *ret_numItems) {
 	int i, numUsers, numItems;
 	int *userIDs, *itemIDs;
@@ -2999,50 +2405,22 @@ SVDlists(char *usertable, char *userkey, char *itemtable, char *itemkey,
 
 	// First, let's get the list of users. We need to count how many
 	// we're dealing with.
-	if (numatts > 0) {
-		sprintf(querystring,"SELECT COUNT(DISTINCT %s) FROM %s WHERE ",
-			userkey,usertable);
-		// Add in attribute information.
-		for (i = 0; i < numatts; i++) {
-			char addition[512];
-			sprintf(addition,"%s = '%s'",attnames[i],attvalues[i]);
-			strncat(querystring,addition,strlen(addition));
-			if (i+1 < numatts)
-				strncat(querystring," AND ",5);
-		}
-		strncat(querystring,";",1);
+	sprintf(querystring,"SELECT COUNT(DISTINCT %s) FROM %s;",
+		userkey,eventtable);
 
-		queryDesc = recathon_queryStart(querystring, &recathoncontext);
-		planstate = queryDesc->planstate;
+	queryDesc = recathon_queryStart(querystring, &recathoncontext);
+	planstate = queryDesc->planstate;
 
-		slot = ExecProcNode(planstate);
-		if (TupIsNull(slot))
-			numUsers = 0;
-		else
-			numUsers = getTupleInt(slot,"count");
-		recathon_queryEnd(queryDesc, recathoncontext);
-	} else
-		numUsers = count_rows(usertable);
+	slot = ExecProcNode(planstate);
+	if (TupIsNull(slot))
+		numUsers = 0;
+	else
+		numUsers = getTupleInt(slot,"count");
+	recathon_queryEnd(queryDesc, recathoncontext);
 	userIDs = (int*) palloc(numUsers*sizeof(int));
 
-	sprintf(querystring,"SELECT DISTINCT %s FROM %s",
-		userkey,usertable);
-	// An optional join.
-	if (numatts > 0)
-		strncat(querystring," WHERE ",7);
-	// Add in attribute information.
-	for (i = 0; i < numatts; i++) {
-		char addition[512];
-		sprintf(addition,"%s = '%s'",attnames[i],attvalues[i]);
-		strncat(querystring,addition,strlen(addition));
-		if (i+1 < numatts)
-			strncat(querystring," AND ",5);
-	}
-
-	// Add the final "ORDER BY".
-	strncat(querystring," ORDER BY ",10);
-	strncat(querystring,userkey,strlen(userkey));
-	strncat(querystring,";",1);
+	sprintf(querystring,"SELECT DISTINCT %s FROM %s ORDER BY %s;",
+		userkey,eventtable,userkey);
 
 	queryDesc = recathon_queryStart(querystring, &recathoncontext);
 	planstate = queryDesc->planstate;
@@ -3060,14 +2438,24 @@ SVDlists(char *usertable, char *userkey, char *itemtable, char *itemkey,
 
 	recathon_queryEnd(queryDesc, recathoncontext);
 
-	// Next, the list of items. We get all of the items, regardless
-	// of what set of users we have.
-	numItems = count_rows(itemtable);
+	// Next, the list of items.
+	sprintf(querystring,"SELECT COUNT(DISTINCT %s) FROM %s;",
+		itemkey,eventtable);
+
+	queryDesc = recathon_queryStart(querystring, &recathoncontext);
+	planstate = queryDesc->planstate;
+
+	slot = ExecProcNode(planstate);
+	if (TupIsNull(slot))
+		numItems = 0;
+	else
+		numItems = getTupleInt(slot,"count");
+	recathon_queryEnd(queryDesc, recathoncontext);
 	itemIDs = (int*) palloc(numItems*sizeof(int));
 
 	querystring = (char*) palloc(1024*sizeof(char));
 	sprintf(querystring,"SELECT DISTINCT %s FROM %s ORDER BY %s;",
-		itemkey, itemtable, itemkey);
+		itemkey, eventtable, itemkey);
 	queryDesc = recathon_queryStart(querystring, &recathoncontext);
 	planstate = queryDesc->planstate;
 
@@ -3095,17 +2483,16 @@ SVDlists(char *usertable, char *userkey, char *itemtable, char *itemkey,
 /* ----------------------------------------------------------------
  *		SVDaverages
  *
- *		This function generates some rating averages which
+ *		This function generates some event averages which
  *		are used as starting points for our SVD. This needs
  *		to be done once per cell. Borrowed from Simon Funk.
  * ----------------------------------------------------------------
  */
 void
-SVDaverages(char *usertable, char *userkey, char *itemtable, char *itemkey, char *ratingtable,
-		char *ratingval, int *userIDs, int *itemIDs, int numUsers, int numItems,
-		int numatts, char **attnames, char **attvalues,
+SVDaverages(char *userkey, char *itemkey, char *eventtable, char *eventval,
+		int *userIDs, int *itemIDs, int numUsers, int numItems,
 		float **ret_itemAvgs, float **ret_userOffsets) {
-	int i;
+	int i, priorID;
 	int *userCounts, *itemCounts;
 	float *userAvgs, *itemAvgs;
 	float *itemSums;
@@ -3135,29 +2522,35 @@ SVDaverages(char *usertable, char *userkey, char *itemtable, char *itemkey, char
 		itemSqs[i] = 0.0;
 	}
 
-	// We need to issue a query to get rating information.
+	// We need to issue a query to get event information.
 	querystring = (char*) palloc(256*sizeof(char));
-	sprintf(querystring,"SELECT %s,%s FROM %s;",itemkey,ratingval,ratingtable);
+	sprintf(querystring,"SELECT %s,%s FROM %s ORDER BY %s;",
+			itemkey,eventval,eventtable,itemkey);
+
+	priorID = -1;
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
+	i = -1;
 
 	for (;;) {
-		int itemindex;
 		int itemnum = 0;
-		float rating = 0.0;
+		float event = 0.0;
 
 		slot = ExecProcNode(planstate);
 		if (TupIsNull(slot)) break;
 
 		itemnum = getTupleInt(slot,itemkey);
-		rating = getTupleFloat(slot,ratingval);
-		itemindex = binarySearch(itemIDs, itemnum, 0, numItems);
+		event = getTupleFloat(slot,eventval);
 
-		if (itemindex >= 0 && itemindex < numItems) {
-			itemCounts[itemindex] += 1;
-			itemSums[itemindex] += rating;
-			itemSqs[itemindex] += (rating*rating);
+		// Are we dealing with a new item ID? If so, switch to the next slot.
+		if (itemnum != priorID) {
+			priorID = itemnum;
+			i++;
 		}
+
+		itemCounts[i] += 1;
+		itemSums[i] += event;
+		itemSqs[i] += (event*event);
 	}
 
 	recathon_queryEnd(queryDesc,recathoncontext);
@@ -3188,7 +2581,7 @@ SVDaverages(char *usertable, char *userkey, char *itemtable, char *itemkey, char
 
 	// Now we derive the global variance.
 	globalVar = (globalSq - ((globalAvgSum*globalAvgSum)/numItems))/numItems;
-	globalAvg = globalSum/count_rows(ratingtable);
+	globalAvg = globalSum/count_rows(eventtable);
 
 	// Finally, we can obtain the baseline averages for each item.
 	for (i = 0; i < numItems; i++) {
@@ -3214,23 +2607,8 @@ SVDaverages(char *usertable, char *userkey, char *itemtable, char *itemkey, char
 	for (i = 0; i < numUsers; i++)
 		userAvgs[i] = 0.0;
 
-	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r",userkey,itemkey,ratingval,ratingtable);
-	if (numatts > 0) {
-		char addition[512];
-		sprintf(addition,", %s u WHERE u.%s = r.%s",usertable,userkey,userkey);
-		strncat(querystring,addition,strlen(addition));
-	}
-	// Add in attribute information.
-	for (i = 0; i < numatts; i++) {
-		char addition[512];
-		sprintf(addition," AND %s = '%s'",attnames[i],attvalues[i]);
-		strncat(querystring,addition,strlen(addition));
-	}
-
-	// Add the final "ORDER BY".
-	strncat(querystring," ORDER BY ",10);
-	strncat(querystring,userkey,strlen(userkey));
-	strncat(querystring,";",1);
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r;",
+		userkey,itemkey,eventval,eventtable);
 
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
@@ -3238,22 +2616,22 @@ SVDaverages(char *usertable, char *userkey, char *itemtable, char *itemkey, char
 	for (;;) {
 		int userindex, itemindex;
 		int usernum, itemnum;
-		float rating;
+		float event;
 
 		slot = ExecProcNode(planstate);
 		if (TupIsNull(slot)) break;
 
 		usernum = getTupleInt(slot,userkey);
 		itemnum = getTupleInt(slot,itemkey);
-		rating = getTupleFloat(slot,ratingval);
+		event = getTupleFloat(slot,eventval);
 		userindex = binarySearch(userIDs, usernum, 0, numUsers);
 		itemindex = binarySearch(itemIDs, itemnum, 0, numItems);
 
-		// We need to find the average offset of a user's rating from
-		// the average rating.
+		// We need to find the average offset of a user's event from
+		// the average event.
 		if (userindex >= 0 && userindex < numUsers) {
 			userCounts[userindex] += 1;
-			userAvgs[userindex] += rating - itemAvgs[itemindex];
+			userAvgs[userindex] += event - itemAvgs[itemindex];
 		}
 	}
 
@@ -3301,23 +2679,22 @@ predictRating(int featurenum, int numFeatures, int userid, int itemid,
 }
 
 /* ----------------------------------------------------------------
- *		SVDsimilarity
+ *		SVDtrain
  *
  *		This function trains features for SVD models.
- *		Returns the number of ratings used.
+ *		Returns the number of events used.
  * ----------------------------------------------------------------
  */
 int
-SVDsimilarity(char *usertable, char *userkey, char *itemtable, char *itemkey, char *ratingtable, char *ratingval,
-		char *usermodelname, char *itemmodelname, char **attnames, char **attvalues, int numatts,
-		bool update) {
+SVDtrain(char *userkey, char *itemkey, char *eventtable, char *eventval,
+		char *usermodelname, char *itemmodelname, bool update) {
 	float **userFeatures, **itemFeatures;
 	int *userIDs, *itemIDs;
 	float *itemAvgs, *userOffsets;
 	int numUsers, numItems;
-	int i, j, k, numRatings;
+	int i, j, k, numEvents;
 	int numFeatures = 50;
-	svd_node *allRatings;
+	svd_node *allEvents;
 	FILE *fp;
 	char *tempfilename, *insertstring;
 	// Information for other queries.
@@ -3341,12 +2718,12 @@ SVDsimilarity(char *usertable, char *userkey, char *itemtable, char *itemkey, ch
 	}
 
 	// First, we get our lists of users and items.
-	SVDlists(usertable,userkey,itemtable,itemkey,numatts,attnames,attvalues,
+	SVDlists(userkey,itemkey,eventtable,
 		&userIDs, &itemIDs, &numUsers, &numItems);
 
 	// Then we get information for baseline averages.
-	SVDaverages(usertable,userkey,itemtable,itemkey,ratingtable,ratingval,
-		userIDs,itemIDs,numUsers,numItems,numatts,attnames,attvalues,
+	SVDaverages(userkey,itemkey,eventtable,eventval,
+		userIDs,itemIDs,numUsers,numItems,
 		&itemAvgs,&userOffsets);
 
 	// Initialize our feature arrays.
@@ -3363,57 +2740,18 @@ SVDsimilarity(char *usertable, char *userkey, char *itemtable, char *itemkey, ch
 			itemFeatures[i][j] = 0.1;
 	}
 
-	// First we need to count the number of ratings we'll be
+	// First we need to count the number of events we'll be
 	// considering.
 	querystring = (char*) palloc(1024*sizeof(char));
+	numEvents = count_rows(eventtable);
 
-	if (numatts > 0) {
-		sprintf(querystring,"SELECT count(r.%s) FROM %s r, %s u WHERE u.%s=r.%s",
-			ratingval,ratingtable,usertable,userkey,userkey);
-		// Add in attribute information.
-		for (i = 0; i < numatts; i++) {
-			char addition[512];
-			sprintf(addition," AND u.%s = '%s'",attnames[i],attvalues[i]);
-			strncat(querystring,addition,strlen(addition));
-		}
+	// Initialize the events array.
+	allEvents = (svd_node*) palloc(numEvents*sizeof(svd_node));
 
-		strncat(querystring,";",1);
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r ORDER BY r.%s;",
+		userkey,itemkey,eventval,eventtable,userkey);
 
-		queryDesc = recathon_queryStart(querystring,&recathoncontext);
-		planstate = queryDesc->planstate;
-
-		slot = ExecProcNode(planstate);
-		if (TupIsNull(slot))
-			numRatings = 0;
-		else
-			numRatings = getTupleInt(slot,"count");
-		recathon_queryEnd(queryDesc,recathoncontext);
-	} else
-		numRatings = count_rows(ratingtable);
-
-	// Initialize the ratings array.
-	allRatings = (svd_node*) palloc(numRatings*sizeof(svd_node));
-
-	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r",
-		userkey,itemkey,ratingval,ratingtable);
-	// An optional join.
-	if (numatts > 0) {
-		char addition[512];
-		sprintf(addition,", %s u WHERE u.%s=r.%s",usertable,userkey,userkey);
-		strncat(querystring,addition,strlen(addition));
-	}
-	// Add in attribute information.
-	for (i = 0; i < numatts; i++) {
-		char addition[512];
-		sprintf(addition," AND u.%s = '%s'",attnames[i],attvalues[i]);
-		strncat(querystring,addition,strlen(addition));
-	}
-
-	// Add the final "ORDER BY".
-	strncat(querystring," ORDER BY r.",12);
-	strncat(querystring,userkey,strlen(userkey));
-	strncat(querystring,";",1);
-	// Let's acquire all of our ratings and store them. Sorting initially by
+	// Let's acquire all of our events and store them. Sorting initially by
 	// user ID avoids unnecessary binary searches.
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
@@ -3425,17 +2763,17 @@ SVDsimilarity(char *usertable, char *userkey, char *itemtable, char *itemkey, ch
 		slot = ExecProcNode(planstate);
 		if (TupIsNull(slot)) break;
 
-		new_svd = createSVDnode(slot, userkey, itemkey, ratingval, userIDs, itemIDs, numUsers, numItems);
+		new_svd = createSVDnode(slot, userkey, itemkey, eventval, userIDs, itemIDs, numUsers, numItems);
 
-		allRatings[i] = new_svd;
+		allEvents[i] = new_svd;
 
 		i++;
-		if (i >= numRatings) break;
+		if (i >= numEvents) break;
 	}
 
 	recathon_queryEnd(queryDesc,recathoncontext);
 
-	// We now have all of the ratings, so we can start training our features.
+	// We now have all of the events, so we can start training our features.
 	for (j = 0; j < 100; j++) {
 		for (i = 0; i < numFeatures; i++) {
 			float learn = 0.001;
@@ -3443,16 +2781,16 @@ SVDsimilarity(char *usertable, char *userkey, char *itemtable, char *itemkey, ch
 			float *userVal = userFeatures[i];
 			float *itemVal = itemFeatures[i];
 
-			for (k = 0; k < numRatings; k++) {
+			for (k = 0; k < numEvents; k++) {
 				int userid;
 				int itemid;
-				float rating, err, residual, temp;
+				float event, err, residual, temp;
 				svd_node current_svd;
 
-				current_svd = allRatings[k];
+				current_svd = allEvents[k];
 				userid = current_svd->userid;
 				itemid = current_svd->itemid;
-				rating = current_svd->rating;
+				event = current_svd->event;
 				// Need to reset residuals for each new
 				// iteration of the trainer.
 				if (i == 0)
@@ -3460,9 +2798,9 @@ SVDsimilarity(char *usertable, char *userkey, char *itemtable, char *itemkey, ch
 				residual = current_svd->residual;
 
 				if (i == 0 && j == 0) {
-					err = rating - (itemAvgs[itemid] + userOffsets[userid]);
+					err = event - (itemAvgs[itemid] + userOffsets[userid]);
 				} else {
-					err = rating - predictRating(i, numFeatures, userid, itemid,
+					err = event - predictRating(i, numFeatures, userid, itemid,
 							userFeatures, itemFeatures, residual);
 				}
 				temp = userVal[userid];
@@ -3577,7 +2915,7 @@ SVDsimilarity(char *usertable, char *userkey, char *itemtable, char *itemkey, ch
 	pfree(itemIDs);
 	pfree(itemAvgs);
 	pfree(userOffsets);
-	pfree(allRatings);
+	pfree(allEvents);
 
 	for (i = 0; i < numFeatures; i++)
 		pfree(userFeatures[i]);
@@ -3586,8 +2924,1249 @@ SVDsimilarity(char *usertable, char *userkey, char *itemtable, char *itemkey, ch
 		pfree(itemFeatures[i]);
 	pfree(itemFeatures);
 
-	// Return the number of ratings we used.
-	return numRatings;
+	// Return the number of events we used.
+	return numEvents;
+}
+
+/* ----------------------------------------------------------------
+ *		generateItemCosModel
+ *
+ *		Create an item-based cosine model on the fly.
+ * ----------------------------------------------------------------
+ */
+void
+generateItemCosModel(RecScanState *recnode) {
+	int i, j, priorID;
+	AttributeInfo *attributes;
+	float **itemmodel;
+	char *eventtable, *userkey, *itemkey, *eventval;
+	int numItems;
+	int *itemIDs;
+	float *itemLengths;
+	sim_node *itemEvents;
+	// Information for other queries.
+	char *querystring;
+	QueryDesc *simqueryDesc;
+	PlanState *simplanstate;
+	TupleTableSlot *simslot;
+	MemoryContext simcontext;
+printf("Starting model.\n");
+	attributes = (AttributeInfo*) recnode->attributes;
+	eventtable = attributes->eventtable;
+	userkey = attributes->userkey;
+	itemkey = attributes->itemkey;
+	eventval = attributes->eventval;
+
+	/* We start by getting vector lengths. */
+	itemLengths = vector_lengths(itemkey,eventtable,eventval,&numItems,&itemIDs);
+
+	/* We have the number of items, so we can initialize our model. */
+	itemmodel = (float**) palloc(numItems*sizeof(float*));
+	for (i = 0; i < numItems; i++)
+		itemmodel[i] = (float*) palloc0(numItems*sizeof(float));
+
+	/* Then we can calculate similarity values for our model. We start by
+	 * storing all the ratings. */
+	itemEvents = (sim_node*) palloc(numItems*sizeof(sim_node));
+	for (i = 0; i < numItems; i++)
+		itemEvents[i] = NULL;
+
+	/* With the model created, we need to populate it, which means calculating
+	 * similarity between all item pairs. We need to query the events table
+	 * in order to get the key information. We'll also keep track of the number
+	 * of events used, since we need to store that information. */
+	querystring = (char*) palloc(1024*sizeof(char));
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r ORDER BY r.%s;",
+		userkey,itemkey,eventval,eventtable,itemkey);
+
+	/* Begin extracting data. */
+	priorID = -1;
+	simqueryDesc = recathon_queryStart(querystring, &simcontext);
+	simplanstate = simqueryDesc->planstate;
+	i = -1;
+
+	for (;;) {
+		int simuser, simitem;
+		float simevent;
+		sim_node newnode;
+
+		/* Shut the compiler up. */
+		simuser = 0; simitem = 0; simevent = 0.0;
+
+		simslot = ExecProcNode(simplanstate);
+		if (TupIsNull(simslot)) break;
+
+		simuser = getTupleInt(simslot,userkey);
+		simitem = getTupleInt(simslot,itemkey);
+		simevent = getTupleFloat(simslot,eventval);
+
+		/* Are we dealing with a new item ID? If so, switch to the next slot. */
+		if (simitem != priorID) {
+			priorID = simitem;
+			i++;
+		}
+
+		/* We now have the user, item, and event for this tuple.
+		 * We insert the results as a sim_node into the
+		 * itemEvents table; we'll do calculations later. */
+		newnode = createSimNode(simuser, simevent);
+		itemEvents[i] = simInsert(itemEvents[i], newnode);
+	}
+
+	/* Query cleanup. */
+	recathon_queryEnd(simqueryDesc, simcontext);
+printf("Calculating similarities.\n");
+	/* Now we do the similarity calculations. Note that we
+	 * don't include duplicate entries, to save time and space.
+	 * The first item ALWAYS has a lower value than the second. */
+	for (i = 0; i < numItems; i++) {
+		float length_i;
+		sim_node item_i;
+
+		item_i = itemEvents[i];
+		if (!item_i) continue;
+		length_i = itemLengths[i];
+
+		for (j = i+1; j < numItems; j++) {
+			float length_j;
+			sim_node item_j;
+			float similarity;
+
+			item_j = itemEvents[j];
+			if (!item_j) continue;
+			length_j = itemLengths[j];
+
+			similarity = cosineSimilarity(item_i, item_j, length_i, length_j);
+			if (similarity <= 0) continue;
+
+			/* Now we output. Like with the pre-computed model, we'll
+			 * only worry about half the model. This allows us to fill
+			 * in the matrix left-to-right, top-to-bottom. */
+			itemmodel[i][j] = similarity;
+		}
+
+		CHECK_FOR_INTERRUPTS();
+	}
+
+	/* Free up the lists of sim_nodes now, since we're done. */
+	for (i = 0; i < numItems; i++) {
+		freeSimList(itemEvents[i]);
+		itemEvents[i] = NULL;
+	}
+
+	/* Fill in the appropriate information. */
+	recnode->fullTotalItems = numItems;
+	recnode->fullItemList = itemIDs;
+	recnode->itemCFmodel = itemmodel;
+
+printf("Model complete.\n");
+}
+
+/* ----------------------------------------------------------------
+ *		generateItemPearModel
+ *
+ *		Create an item-based Pearson model on the fly.
+ * ----------------------------------------------------------------
+ */
+void
+generateItemPearModel(RecScanState *recnode) {
+	int i, j, priorID;
+	char *querystring;
+	char *eventtable, *userkey, *itemkey, *eventval;
+	sim_node *itemEvents;
+	int numItems;
+	int *itemIDs;
+	float *itemAvgs;
+	float *itemPearsons;
+	AttributeInfo *attributes;
+	float **itemmodel;
+	// Information for other queries.
+	QueryDesc *simqueryDesc;
+	PlanState *simplanstate;
+	TupleTableSlot *simslot;
+	MemoryContext simcontext;
+
+	attributes = (AttributeInfo*) recnode->attributes;
+	eventtable = attributes->eventtable;
+	userkey = attributes->userkey;
+	itemkey = attributes->itemkey;
+	eventval = attributes->eventval;
+
+	// First we need to get relevant Pearson information.
+	pearson_info(itemkey, eventtable, eventval, &numItems, &itemIDs, &itemAvgs, &itemPearsons);
+
+	/* We have the number of items, so we can initialize our model. */
+	itemmodel = (float**) palloc(numItems*sizeof(float*));
+	for (i = 0; i < numItems; i++)
+		itemmodel[i] = (float*) palloc0(numItems*sizeof(float));
+
+	// With the precomputation done, we need to derive the actual item
+	// similarities. We can do this in a way that's linear in the number
+	// of I/Os and also the amount of storage. The complexity is relegated
+	// to in-memory calculations, which is the most affordable. We need to
+	// use this data structure here.
+	itemEvents = (sim_node*) palloc(numItems*sizeof(sim_node));
+	for (i = 0; i < numItems; i++)
+		itemEvents[i] = NULL;
+
+	// With the model created, we need to populate it, which means calculating
+	// similarity between all item pairs. We need to query the events table
+	// in order to get the key information.
+	querystring = (char*) palloc(1024*sizeof(char));
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r ORDER BY r.%s;",
+		userkey,itemkey,eventval,eventtable,itemkey);
+
+	// Begin extracting data.
+	priorID = -1;
+	simqueryDesc = recathon_queryStart(querystring, &simcontext);
+	simplanstate = simqueryDesc->planstate;
+	i = -1;
+
+	for (;;) {
+		int simuser, simitem;
+		float simevent;
+		sim_node newnode;
+
+		// Shut the compiler up.
+		simuser = 0; simitem = 0; simevent = 0.0;
+
+		simslot = ExecProcNode(simplanstate);
+		if (TupIsNull(simslot)) break;
+
+		simuser = getTupleInt(simslot,userkey);
+		simitem = getTupleInt(simslot,itemkey);
+		simevent = getTupleFloat(simslot,eventval);
+
+		// Are we dealing with a new item ID? If so, switch to the next slot.
+		if (simitem != priorID) {
+			priorID = simitem;
+			i++;
+		}
+
+		// We now have the user, item, and event for this tuple.
+		// We insert the results as a sim_node into the
+		// itemEvents table; we'll do calculations later.
+		newnode = createSimNode(simuser, simevent);
+		itemEvents[i] = simInsert(itemEvents[i], newnode);
+	}
+
+	// Query cleanup.
+	recathon_queryEnd(simqueryDesc, simcontext);
+	pfree(querystring);
+
+	// Now we do the similarity calculations. Note that we
+	// don't include duplicate entries, to save time and space.
+	// The first item ALWAYS has a lower value than the second.
+	for (i = 0; i < numItems; i++) {
+		float avg_i, pearson_i;
+		sim_node item_i;
+
+		item_i = itemEvents[i];
+		if (!item_i) continue;
+		avg_i = itemAvgs[i];
+		pearson_i = itemPearsons[i];
+
+		for (j = i+1; j < numItems; j++) {
+			float avg_j, pearson_j;
+			sim_node item_j;
+			float similarity;
+
+			item_j = itemEvents[j];
+			if (!item_j) continue;
+			avg_j = itemAvgs[j];
+			pearson_j = itemPearsons[j];
+
+			similarity = pearsonSimilarity(item_i, item_j, avg_i, avg_j, pearson_i, pearson_j);
+			if (similarity == 0.0) continue;
+
+			/* Now we output. Like with the pre-computed model, we'll
+			 * only worry about half the model. This allows us to fill
+			 * in the matrix left-to-right, top-to-bottom. */
+			itemmodel[i][j] = similarity;
+		}
+
+		CHECK_FOR_INTERRUPTS();
+	}
+
+	// Free up the lists of sim_nodes and we're done.
+	for (i = 0; i < numItems; i++) {
+		freeSimList(itemEvents[i]);
+		itemEvents[i] = NULL;
+	}
+
+	// Return the relevant information.
+	recnode->fullTotalItems = numItems;
+	recnode->fullItemList = itemIDs;
+	recnode->itemCFmodel = itemmodel;
+}
+
+/* ----------------------------------------------------------------
+ *		generateUserCosModel
+ *
+ *		Create a user-based cosine model on the fly.
+ * ----------------------------------------------------------------
+ */
+void
+generateUserCosModel(RecScanState *recnode) {
+	int i, j, priorID;
+	int numEvents = 0;
+	char *querystring;
+	sim_node *userEvents;
+	char *eventtable, *userkey, *itemkey, *eventval;
+	AttributeInfo *attributes;
+	float **usermodel;
+	int numUsers;
+	int *userIDs;
+	float *userLengths;
+	// Information for other queries.
+	QueryDesc *simqueryDesc;
+	PlanState *simplanstate;
+	TupleTableSlot *simslot;
+	MemoryContext simcontext;
+printf("Starting model.\n");
+	attributes = (AttributeInfo*) recnode->attributes;
+	eventtable = attributes->eventtable;
+	userkey = attributes->userkey;
+	itemkey = attributes->itemkey;
+	eventval = attributes->eventval;
+
+	// First we need vector lengths.
+	userLengths = vector_lengths(userkey, eventtable, eventval, &numUsers, &userIDs);
+
+	/* We have the number of users, so we can initialize our model. */
+	usermodel = (float**) palloc(numUsers*sizeof(float*));
+	for (i = 0; i < numUsers; i++)
+		usermodel[i] = (float*) palloc0(numUsers*sizeof(float));
+
+	// With the precomputation done, we need to derive the actual user
+	// similarities. We can do this in a way that's linear in the number
+	// of I/Os and also the amount of storage. The complexity is relegated
+	// to in-memory calculations, which is the most affordable. We need to
+	// use this data structure here.
+	userEvents = (sim_node*) palloc(numUsers*sizeof(sim_node));
+	for (i = 0; i < numUsers; i++)
+		userEvents[i] = NULL;
+
+	// With the model created, we need to populate it, which means calculating
+	// similarity between all user pairs. We need to query the events table
+	// in order to get the key information.
+	querystring = (char*) palloc(1024*sizeof(char));
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r ORDER BY r.%s;",
+		userkey,itemkey,eventval,eventtable,userkey);
+
+	// Begin extracting data.
+	priorID = -1;
+	simqueryDesc = recathon_queryStart(querystring, &simcontext);
+	simplanstate = simqueryDesc->planstate;
+	i = -1;
+
+	for (;;) {
+		int simuser, simitem;
+		float simevent;
+		sim_node newnode;
+
+		// Shut the compiler up.
+		simuser = 0; simitem = 0; simevent = 0.0;
+
+		simslot = ExecProcNode(simplanstate);
+		if (TupIsNull(simslot)) break;
+
+		simuser = getTupleInt(simslot,userkey);
+		simitem = getTupleInt(simslot,itemkey);
+		simevent = getTupleFloat(simslot,eventval);
+
+		// Are we dealing with a new user ID? If so, switch to the next slot.
+		if (simuser != priorID) {
+			priorID = simuser;
+			i++;
+		}
+
+		// We now have the user, item, and event for this tuple.
+		// We insert the results as a sim_node into the
+		// userEvents table; we'll do calculations later.
+		newnode = createSimNode(simitem, simevent);
+		userEvents[i] = simInsert(userEvents[i], newnode);
+		numEvents++;
+	}
+
+	// Query cleanup.
+	recathon_queryEnd(simqueryDesc, simcontext);
+	pfree(querystring);
+printf("Calculating similarities.\n");
+	// Now we do the similarity calculations. Note that we
+	// don't include duplicate entries, to save time and space.
+	// The first user ALWAYS has a lower value than the second.
+	for (i = 0; i < numUsers; i++) {
+		float length_i;
+		sim_node user_i;
+
+		user_i = userEvents[i];
+		if (!user_i) continue;
+		length_i = userLengths[i];
+
+		for (j = i+1; j < numUsers; j++) {
+			float length_j;
+			sim_node user_j;
+			float similarity;
+
+			user_j = userEvents[j];
+			if (!user_j) continue;
+			length_j = userLengths[j];
+
+			similarity = cosineSimilarity(user_i, user_j, length_i, length_j);
+			if (similarity <= 0) continue;
+
+			/* Now we output. Like with the pre-computed model, we'll
+			 * only worry about half the model. This allows us to fill
+			 * in the matrix left-to-right, top-to-bottom. */
+			usermodel[i][j] = similarity;
+		}
+
+		CHECK_FOR_INTERRUPTS();
+	}
+
+	// Free up the lists of sim_nodes and we're done.
+	for (i = 0; i < numUsers; i++) {
+		freeSimList(userEvents[i]);
+		userEvents[i] = NULL;
+	}
+
+	// Return the relevant information.
+	recnode->totalUsers = numUsers;
+	recnode->userList = userIDs;
+	recnode->userCFmodel = usermodel;
+printf("Model complete.\n");
+}
+
+/* ----------------------------------------------------------------
+ *		generateUserPearModel
+ *
+ *		Create a user-based Pearson model on the fly.
+ * ----------------------------------------------------------------
+ */
+void
+generateUserPearModel(RecScanState *recnode) {
+	int i, j, priorID;
+	int numEvents = 0;
+	char *querystring;
+	sim_node *userEvents;
+	char *eventtable, *userkey, *itemkey, *eventval;
+	AttributeInfo *attributes;
+	float **usermodel;
+	int numUsers;
+	int *userIDs;
+	float *userAvgs;
+	float *userPearsons;
+	// Information for other queries.
+	QueryDesc *simqueryDesc;
+	PlanState *simplanstate;
+	TupleTableSlot *simslot;
+	MemoryContext simcontext;
+
+	attributes = (AttributeInfo*) recnode->attributes;
+	eventtable = attributes->eventtable;
+	userkey = attributes->userkey;
+	itemkey = attributes->itemkey;
+	eventval = attributes->eventval;
+
+	// First, we need Pearson info.
+	pearson_info(userkey, eventtable, eventval, &numUsers, &userIDs, &userAvgs, &userPearsons);
+
+	/* We have the number of users, so we can initialize our model. */
+	usermodel = (float**) palloc(numUsers*sizeof(float*));
+	for (i = 0; i < numUsers; i++)
+		usermodel[i] = (float*) palloc0(numUsers*sizeof(float));
+
+	// With the precomputation done, we need to derive the actual item
+	// similarities. We can do this in a way that's linear in the number
+	// of I/Os and also the amount of storage. The complexity is relegated
+	// to in-memory calculations, which is the most affordable. We need to
+	// use this data structure here.
+	userEvents = (sim_node*) palloc(numUsers*sizeof(sim_node));
+	for (i = 0; i < numUsers; i++)
+		userEvents[i] = NULL;
+
+	// With the model created, we need to populate it, which means calculating
+	// similarity between all item pairs. We need to query the events table
+	// in order to get the key information.
+	querystring = (char*) palloc(1024*sizeof(char));
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r ORDER BY r.%s;",
+		userkey,itemkey,eventval,eventtable,userkey);
+
+	// Begin extracting data.
+	priorID = -1;
+	simqueryDesc = recathon_queryStart(querystring, &simcontext);
+	simplanstate = simqueryDesc->planstate;
+	i = -1;
+
+	for (;;) {
+		int simuser, simitem;
+		float simevent;
+		sim_node newnode;
+
+		// Shut the compiler up.
+		simuser = 0; simitem = 0; simevent = 0.0;
+
+		simslot = ExecProcNode(simplanstate);
+		if (TupIsNull(simslot)) break;
+
+		simuser = getTupleInt(simslot,userkey);
+		simitem = getTupleInt(simslot,itemkey);
+		simevent = getTupleFloat(simslot,eventval);
+
+		// Are we dealing with a new user ID? If so, switch to the next slot.
+		if (simuser != priorID) {
+			priorID = simuser;
+			i++;
+		}
+
+		// We now have the user, item, and event for this tuple.
+		// We insert the results as a sim_node into the
+		// userEvents table; we'll do calculations later.
+		newnode = createSimNode(simitem, simevent);
+		userEvents[i] = simInsert(userEvents[i], newnode);
+		numEvents++;
+	}
+
+	// Query cleanup.
+	recathon_queryEnd(simqueryDesc, simcontext);
+	pfree(querystring);
+
+	// Now we do the similarity calculations. Note that we
+	// don't include duplicate entries, to save time and space.
+	// The first item ALWAYS has a lower value than the second.
+	for (i = 0; i < numUsers; i++) {
+		float avg_i, pearson_i;
+		sim_node user_i;
+
+		user_i = userEvents[i];
+		if (!user_i) continue;
+		avg_i = userAvgs[i];
+		pearson_i = userPearsons[i];
+
+		for (j = i+1; j < numUsers; j++) {
+			float avg_j, pearson_j;
+			sim_node user_j;
+			float similarity;
+
+			user_j = userEvents[j];
+			if (!user_j) continue;
+			avg_j = userAvgs[j];
+			pearson_j = userPearsons[j];
+
+			similarity = pearsonSimilarity(user_i, user_j, avg_i, avg_j, pearson_i, pearson_j);
+			if (similarity == 0.0) continue;
+
+			/* Now we output. Like with the pre-computed model, we'll
+			 * only worry about half the model. This allows us to fill
+			 * in the matrix left-to-right, top-to-bottom. */
+			usermodel[i][j] = similarity;
+		}
+
+		CHECK_FOR_INTERRUPTS();
+	}
+
+	// Free up the lists of sim_nodes and we're done.
+	for (i = 0; i < numUsers; i++) {
+		freeSimList(userEvents[i]);
+		userEvents[i] = NULL;
+	}
+
+	// Return the relevant information.
+	recnode->totalUsers = numUsers;
+	recnode->userList = userIDs;
+	recnode->userCFmodel = usermodel;
+}
+
+/* ----------------------------------------------------------------
+ *		generateSVDmodel
+ *
+ *		Create a SVD model on the fly.
+ * ----------------------------------------------------------------
+ */
+void
+generateSVDmodel(RecScanState *recnode) {
+	float **userFeatures, **itemFeatures;
+	int *userIDs, *itemIDs;
+	float *itemAvgs, *userOffsets;
+	int numUsers, numItems;
+	int i, j, k, numEvents;
+	int numFeatures = 50;
+	svd_node *allEvents;
+	AttributeInfo *attributes;
+	char *eventtable, *userkey, *itemkey, *eventval;
+	// Information for other queries.
+	char *querystring;
+	QueryDesc *queryDesc;
+	PlanState *planstate;
+	TupleTableSlot *slot;
+	MemoryContext recathoncontext;
+
+	attributes = (AttributeInfo*) recnode->attributes;
+	eventtable = attributes->eventtable;
+	userkey = attributes->userkey;
+	itemkey = attributes->itemkey;
+	eventval = attributes->eventval;
+
+	// First, we get our lists of users and items.
+	SVDlists(userkey,itemkey,eventtable,
+		&userIDs, &itemIDs, &numUsers, &numItems);
+
+	// Then we get information for baseline averages.
+	SVDaverages(userkey,itemkey,eventtable,eventval,
+		userIDs,itemIDs,numUsers,numItems,
+		&itemAvgs,&userOffsets);
+
+	// Initialize our feature arrays.
+	userFeatures = (float**) palloc(numFeatures*sizeof(float*));
+	for (i = 0; i < numFeatures; i++) {
+		userFeatures[i] = (float*) palloc(numUsers*sizeof(float));
+		for (j = 0; j < numUsers; j++)
+			userFeatures[i][j] = 0.1;
+	}
+	itemFeatures = (float**) palloc(numFeatures*sizeof(float*));
+	for (i = 0; i < numFeatures; i++) {
+		itemFeatures[i] = (float*) palloc(numItems*sizeof(float));
+		for (j = 0; j < numItems; j++)
+			itemFeatures[i][j] = 0.1;
+	}
+
+	// First we need to count the number of events we'll be
+	// considering.
+	querystring = (char*) palloc(1024*sizeof(char));
+	numEvents = count_rows(eventtable);
+
+	// Initialize the events array.
+	allEvents = (svd_node*) palloc(numEvents*sizeof(svd_node));
+
+	sprintf(querystring,"SELECT r.%s,r.%s,r.%s FROM %s r ORDER BY r.%s;",
+		userkey,itemkey,eventval,eventtable,userkey);
+
+	// Let's acquire all of our events and store them. Sorting initially by
+	// user ID avoids unnecessary binary searches.
+	queryDesc = recathon_queryStart(querystring,&recathoncontext);
+	planstate = queryDesc->planstate;
+
+	i = 0;
+	for (;;) {
+		svd_node new_svd;
+
+		slot = ExecProcNode(planstate);
+		if (TupIsNull(slot)) break;
+
+		new_svd = createSVDnode(slot, userkey, itemkey, eventval, userIDs, itemIDs, numUsers, numItems);
+
+		allEvents[i] = new_svd;
+
+		i++;
+		if (i >= numEvents) break;
+	}
+
+	recathon_queryEnd(queryDesc,recathoncontext);
+printf("Training.\n");
+	// We now have all of the events, so we can start training our features.
+	for (j = 0; j < 100; j++) {
+printf("Iteration %d.\n",j);
+		for (i = 0; i < numFeatures; i++) {
+			float learn = 0.001;
+			float penalty = 0.002;
+			float *userVal = userFeatures[i];
+			float *itemVal = itemFeatures[i];
+
+			for (k = 0; k < numEvents; k++) {
+				int userid;
+				int itemid;
+				float event, err, residual, temp;
+				svd_node current_svd;
+
+				current_svd = allEvents[k];
+				userid = current_svd->userid;
+				itemid = current_svd->itemid;
+				event = current_svd->event;
+				// Need to reset residuals for each new
+				// iteration of the trainer.
+				if (i == 0)
+					current_svd->residual = 0;
+				residual = current_svd->residual;
+
+				if (i == 0 && j == 0) {
+					err = event - (itemAvgs[itemid] + userOffsets[userid]);
+				} else {
+					err = event - predictRating(i, numFeatures, userid, itemid,
+							userFeatures, itemFeatures, residual);
+				}
+				temp = userVal[userid];
+				userVal[userid] += learn * ((err * itemVal[itemid]) - (penalty * userVal[userid]));
+				itemVal[itemid] += learn * ((err * temp) - (penalty * itemVal[itemid]));
+
+				// Store residuals.
+				if (i == 0)
+					current_svd->residual = userVal[userid] * itemVal[itemid];
+				else
+					current_svd->residual += userVal[userid] * itemVal[itemid];
+			}
+
+			CHECK_FOR_INTERRUPTS();
+		}
+	}
+printf("Training complete.\n");
+	// Free up memory.
+	pfree(querystring);
+	pfree(itemAvgs);
+	pfree(userOffsets);
+	pfree(allEvents);
+
+	// Return the relevant information.
+	recnode->numFeatures = numFeatures;
+	recnode->totalUsers = numUsers;
+	recnode->fullTotalItems = numItems;
+	recnode->userList = userIDs;
+	recnode->fullItemList = itemIDs;
+	recnode->SVDusermodel = userFeatures;
+	recnode->SVDitemmodel = itemFeatures;
+}
+
+/* ----------------------------------------------------------------
+ *		itemCFgenerate
+ *
+ *		Generates a predicted RecScore for a given user and
+ *		item, for a recommender that uses item-based
+ *		collaborative filtering built on-the-fly.
+ * ----------------------------------------------------------------
+ */
+float
+itemCFgenerate(RecScanState *recnode, int itemid, int itemindex)
+{
+	int i;
+	float recScore;
+	GenRating *currentItem;
+
+	// First, we grab the GenRating for this item ID.
+	currentItem = hashFind(recnode->pendingTable, itemid);
+	// In case there's some error.
+	if (!currentItem)
+		return -1;
+
+	// We're going to look through the similarity matrix for the
+	// numbers that correspond to this item, and find which of those
+	// also correspond to items this user rated. We will use that
+	// information to obtain the estimated rating.
+
+	for (i = itemindex+1; i < recnode->fullTotalItems; i++) {
+		int itemID;
+		float similarity;
+		GenRating *ratedItem;
+
+		itemID = recnode->fullItemList[i];
+		similarity = recnode->itemCFmodel[itemindex][i];
+
+		// Find the array slot this item ID corresponds to.
+		// If -1 is returned, then the item ID corresponds to
+		// another item we haven't rated, so we don't care.
+		ratedItem = hashFind(recnode->ratedTable,itemID);
+		if (ratedItem) {
+			currentItem->score += similarity*ratedItem->score;
+			if (similarity < 0)
+				similarity *= -1;
+			currentItem->totalSim += similarity;
+		}
+	}
+
+	if (currentItem->totalSim == 0) return 0;
+
+	recScore = currentItem->score / currentItem->totalSim;
+	return recScore;
+}
+
+/* ----------------------------------------------------------------
+ *		userCFgenerate
+ *
+ *		Generates a predicted RecScore for a given user and
+ *		item, for a recommender that uses user-based
+ *		collaborative filtering built on-the-fly.
+ * ----------------------------------------------------------------
+ */
+float
+userCFgenerate(RecScanState *recnode, int itemid, int itemindex)
+{
+	float event, totalSim, average;
+	AttributeInfo *attributes;
+	// Query objects;
+	char *querystring;
+	QueryDesc *queryDesc;
+	PlanState *planstate;
+	TupleTableSlot *qslot;
+	MemoryContext recathoncontext;
+
+	attributes = (AttributeInfo*) recnode->attributes;
+
+	event = 0.0;
+	totalSim = 0.0;
+	average = recnode->average;
+
+	/* We need to query the events table, so that we can
+	 * find all events for this item and match them up
+	 * with what we have in the similarity matrix. We note
+	 * that it's necessarily true that the user has not
+	 * rated these items. */
+	querystring = (char*) palloc(1024*sizeof(char));
+	sprintf(querystring,"select * from %s where %s = %d;",
+		attributes->eventtable,attributes->itemkey,itemid);
+	queryDesc = recathon_queryStart(querystring,&recathoncontext);
+	planstate = queryDesc->planstate;
+
+	for (;;) {
+		int currentUserID;
+		float currentRating, similarity;
+		GenRating *currentUser;
+
+		qslot = ExecProcNode(planstate);
+		if (TupIsNull(qslot)) break;
+
+		currentUserID = getTupleInt(qslot,attributes->userkey);
+		currentRating = getTupleFloat(qslot,attributes->eventval);
+
+		currentUser = hashFind(recnode->simTable,currentUserID);
+		if (!currentUser) continue;
+		similarity = currentUser->totalSim;
+
+		event += (currentRating - average) * similarity;
+		// Poor man's absolute value of the similarity.
+		if (similarity < 0)
+			similarity *= -1;
+		totalSim += similarity;
+	}
+	recathon_queryEnd(queryDesc,recathoncontext);
+
+	if (totalSim == 0.0) return 0.0;
+
+	event /= totalSim;
+	event += average;
+
+	return event;
+}
+
+/* ----------------------------------------------------------------
+ *		SVDgenerate
+ *
+ *		Generates a predicted RecScore for a given user and
+ *		item, for a recommender that uses SVD built
+ *		on-the-fly.
+ * ----------------------------------------------------------------
+ */
+float
+SVDgenerate(RecScanState *recnode, int itemid, int itemindex)
+{
+	int i;
+	float **userFeatures, **itemFeatures;
+	float recscore = 0.0;
+
+	userFeatures = recnode->SVDusermodel;
+	itemFeatures = recnode->SVDitemmodel;
+
+	// At this point, our work is easy.
+	for (i = 0; i < recnode->numFeatures; i++)
+		recscore += userFeatures[i][recnode->userindex] * itemFeatures[i][itemindex];
+
+	return recscore;
+}
+
+/* ----------------------------------------------------------------
+ *		applyItemSimGenerate
+ *
+ *		The equivalent of applyItemSim for on-the-fly
+ *		recommendation.
+ * ----------------------------------------------------------------
+ */
+void
+applyItemSimGenerate(RecScanState *recnode)
+{
+	int i, j;
+	GenHash *ratedTable;
+
+	ratedTable = recnode->ratedTable;
+
+	// For every item we've rated, we need to obtain its similarity
+	// scores and apply them to the appropriate items. This is
+	// necessary because we're only storing half of the similarity
+	// matrix.
+	for (i = 0; i < ratedTable->hash; i++) {
+		GenRating *currentItem;
+
+		for (currentItem = ratedTable->table[i]; currentItem;
+				currentItem = currentItem->next) {
+			int itemindex = currentItem->index;
+
+			for (j = itemindex+1; j < recnode->fullTotalItems; j++) {
+				int itemID;
+				float similarity;
+				GenRating *pendingItem;
+
+				itemID = recnode->fullItemList[j];
+				similarity = recnode->itemCFmodel[itemindex][j];
+
+				// If the similarity is 0, there's no point.
+				if (similarity == 0.0)
+					continue;
+
+				// Find the array slot this item ID corresponds to.
+				// If -1 is returned, then the item ID corresponds to
+				// another item we've rated, so we don't care.
+				pendingItem = hashFind(recnode->pendingTable,itemID);
+				if (pendingItem) {
+					pendingItem->score += similarity*currentItem->score;
+					if (similarity < 0)
+						similarity *= -1;
+					pendingItem->totalSim += similarity;
+				}
+			}
+		}
+	}
+}
+
+/* ----------------------------------------------------------------
+ *		prepUserForRating
+ *
+ *		Given a user ID, we need to create some data
+ *		structures that will allow us to efficiently
+ *		predict ratings for this user. Returns false if
+ *		this user has no ratings, or has rated all items,
+ *		in which case prediction is useless.
+ * ----------------------------------------------------------------
+ */
+bool
+prepUserForRating(RecScanState *recstate, int userID) {
+	int i, userindex;
+	// Query objects.
+	char *querystring;
+	QueryDesc *queryDesc;
+	PlanState *planstate;
+	TupleTableSlot *hslot;
+	MemoryContext recathoncontext;
+
+	AttributeInfo *attributes = (AttributeInfo*) recstate->attributes;
+	attributes->userID = userID;
+
+	/* First off, we need to delete any existing structures. */
+	if (recstate->ratedTable) {
+		freeHash(recstate->ratedTable);
+		recstate->ratedTable = NULL;
+	}
+	if (recstate->pendingTable) {
+		freeHash(recstate->pendingTable);
+		recstate->pendingTable = NULL;
+	}
+	if (recstate->simTable) {
+		freeHash(recstate->simTable);
+		recstate->simTable = NULL;
+	}
+	if (recstate->itemList) {
+		pfree(recstate->itemList);
+		recstate->itemList = NULL;
+	}
+	if (recstate->userFeatures) {
+		pfree(recstate->userFeatures);
+		recstate->userFeatures = NULL;
+	}
+
+	/* We need to obtain a full list of all the items we need to calculate
+	 * a score for. First count, then query. */
+	querystring = (char*) palloc(1024*sizeof(char));
+	sprintf(querystring,"select count(distinct %s) from %s where %s not in (select distinct %s from %s where %s = %d);",
+		attributes->itemkey,attributes->eventtable,attributes->itemkey,
+		attributes->itemkey,attributes->eventtable,attributes->userkey,
+		userID);
+	queryDesc = recathon_queryStart(querystring,&recathoncontext);
+	planstate = queryDesc->planstate;
+	hslot = ExecProcNode(planstate);
+	recstate->totalItems = getTupleInt(hslot,"count");
+	recathon_queryEnd(queryDesc,recathoncontext);
+
+	/* It's highly unlikely, but possible, that someone has rated literally
+	 * every item. */
+	if (recstate->totalItems <= 0) {
+		elog(WARNING, "user %d has rated all items, no predictions to be made",
+			userID);
+		return false;
+	}
+
+	recstate->itemList = (int*) palloc(recstate->totalItems*sizeof(int));
+	recstate->itemNum = 0;
+
+	/* Now for the actual query. */
+	sprintf(querystring,"select distinct %s from %s where %s not in (select distinct %s from %s where %s = %d) order by %s;",
+		attributes->itemkey,attributes->eventtable,attributes->itemkey,
+		attributes->itemkey,attributes->eventtable,attributes->userkey,
+		userID,attributes->itemkey);
+	queryDesc = recathon_queryStart(querystring,&recathoncontext);
+	planstate = queryDesc->planstate;
+
+	i = 0;
+	for (;;) {
+		int currentItem;
+
+		hslot = ExecProcNode(planstate);
+		if (TupIsNull(hslot)) break;
+
+		currentItem = getTupleInt(hslot,attributes->itemkey);
+
+		recstate->itemList[i] = currentItem;
+		i++;
+		if (i >= recstate->totalItems) break;
+	}
+	recathon_queryEnd(queryDesc,recathoncontext);
+
+	/* Quick error protection. */
+	recstate->totalItems = i;
+	if (recstate->totalItems <= 0) {
+		elog(WARNING, "user %d has rated all items, no predictions to be made",
+			userID);
+		return false;
+	}
+
+	switch ((recMethod) attributes->method) {
+		/* If this is an item-based CF recommender, we can pre-obtain
+		 * the ratings of this user, and add in their contributions to
+		 * the scores of all the other items. */
+		case itemCosCF:
+		case itemPearCF:
+			/* The rated list is all of the items this user has
+			 * rated already. We store the ratings now and we'll
+			 * use them during calculation. */
+			sprintf(querystring,"select count(*) from %s where %s = %d;",
+				attributes->eventtable,attributes->userkey,userID);
+			queryDesc = recathon_queryStart(querystring,&recathoncontext);
+			planstate = queryDesc->planstate;
+			hslot = ExecProcNode(planstate);
+			recstate->totalRatings = getTupleInt(hslot,"count");
+			recathon_queryEnd(queryDesc,recathoncontext);
+
+			/* It's possible that someone has rated no items. */
+			if (recstate->totalRatings <= 0) {
+				elog(WARNING, "user %d has rated no items, no predictions can be made",
+					userID);
+				return false;
+			}
+
+			recstate->ratedTable = hashCreate(recstate->totalRatings);
+
+			/* Now to acquire the actual ratings. */
+			sprintf(querystring,"select * from %s where %s = %d order by %s;",
+				attributes->eventtable,attributes->userkey,
+				userID,attributes->itemkey);
+			queryDesc = recathon_queryStart(querystring,&recathoncontext);
+			planstate = queryDesc->planstate;
+
+			i = 0;
+			for (;;) {
+				int currentItem;
+				float currentRating;
+				GenRating *newItem;
+
+				hslot = ExecProcNode(planstate);
+				if (TupIsNull(hslot)) break;
+
+				currentItem = getTupleInt(hslot,attributes->itemkey);
+				currentRating = getTupleFloat(hslot,attributes->eventval);
+
+				newItem = (GenRating*) palloc(sizeof(GenRating));
+				newItem->ID = currentItem;
+				newItem->index = binarySearch(recstate->fullItemList,currentItem,0,recstate->fullTotalItems);
+				newItem->score = currentRating;
+				newItem->next = NULL;
+				hashAdd(recstate->ratedTable, newItem);
+
+				i++;
+				if (i >= recstate->totalRatings) break;
+			}
+			recathon_queryEnd(queryDesc,recathoncontext);
+
+			/* Quick error protection. Again, I don't know how this could
+			 * possibly happen, but better safe than sorry. */
+			recstate->totalRatings = i;
+			if (recstate->totalRatings <= 0) {
+				elog(WARNING, "user %d has rated no items, no predictions can be made",
+					userID);
+				return false;
+			}
+
+			/* The pending list is all of the items we have yet to
+			 * calculate ratings for. We need to maintain partial
+			 * scores and similarity sums for each one. */
+			recstate->pendingTable = hashCreate(recstate->totalItems);
+			for (i = 0; i < recstate->totalItems; i++) {
+				GenRating *newItem;
+
+				newItem = (GenRating*) palloc(sizeof(GenRating));
+				newItem->ID = recstate->itemList[i];
+				/* The pending list doesn't need indexes. */
+				newItem->index = -1;
+				newItem->score = 0.0;
+				newItem->totalSim = 0.0;
+				newItem->next = NULL;
+				hashAdd(recstate->pendingTable, newItem);
+			}
+
+			/* With another function, we apply the ratings and similarities
+			 * from the rated items to the unrated ones. It's good to get
+			 * this done early, as this will allow the operator to be
+			 * non-blocking, which is important. */
+			if (attributes->opType == OP_GENERATE)
+				applyItemSimGenerate(recstate);
+			else
+				applyItemSim(recstate, attributes->recModelName);
+
+			break;
+		case userCosCF:
+		case userPearCF:
+			userindex = binarySearch(recstate->userList, userID, 0, recstate->totalUsers);
+
+			/* The first thing we'll do is obtain the average rating. */
+			sprintf(querystring,"select avg(%s) as average from %s where %s = %d;",
+				attributes->eventval,attributes->eventtable,
+				attributes->userkey,userID);
+			queryDesc = recathon_queryStart(querystring,&recathoncontext);
+			planstate = queryDesc->planstate;
+
+			hslot = ExecProcNode(planstate);
+			recstate->average = getTupleFloat(hslot,"average");
+			recathon_queryEnd(queryDesc,recathoncontext);
+
+			/* Next, we need to store this user's similarity model
+			 * in a hash table for easier access. We base the table on
+			 * the number of items we have to rate - a close enough
+			 * approximation that we won't have much trouble. */
+			recstate->simTable = hashCreate(recstate->totalItems);
+
+			/* We need to find the entire similarity table for this
+			 * user, which will be in two parts. */
+			if (attributes->opType == OP_GENERATE) {
+				for (i = 0; i < userindex; i++) {
+					int currentUser;
+					float currentSim;
+					GenRating *newUser;
+
+					currentUser = recstate->userList[i];
+					currentSim = recstate->userCFmodel[i][userindex];
+
+					newUser = (GenRating*) palloc(sizeof(GenRating));
+					newUser->ID = currentUser;
+					newUser->index = i;
+					newUser->totalSim = currentSim;
+					newUser->next = NULL;
+					hashAdd(recstate->simTable, newUser);
+				}
+
+				for (i = userindex+1; i < recstate->totalUsers; i++) {
+					int currentUser;
+					float currentSim;
+					GenRating *newUser;
+
+					currentUser = recstate->userList[i];
+					currentSim = recstate->userCFmodel[userindex][i];
+
+					newUser = (GenRating*) palloc(sizeof(GenRating));
+					newUser->ID = currentUser;
+					newUser->index = i;
+					newUser->totalSim = currentSim;
+					newUser->next = NULL;
+					hashAdd(recstate->simTable, newUser);
+				}
+			} else {
+				sprintf(querystring,"select * from %s where user1 < %d and user2 = %d;",
+					attributes->recModelName,attributes->userID,
+					attributes->userID);
+				queryDesc = recathon_queryStart(querystring,&recathoncontext);
+				planstate = queryDesc->planstate;
+
+				for (;;) {
+					int currentUser;
+					float currentSim;
+					GenRating *newUser;
+
+					hslot = ExecProcNode(planstate);
+					if (TupIsNull(hslot)) break;
+
+					currentUser = getTupleInt(hslot,"user1");
+					currentSim = getTupleFloat(hslot,"similarity");
+
+					newUser = (GenRating*) palloc(sizeof(GenRating));
+					newUser->ID = currentUser;
+					/* Pre-generated recommendation doesn't need
+					 * indexes. */
+					newUser->index = -1;
+					newUser->totalSim = currentSim;
+					newUser->next = NULL;
+					hashAdd(recstate->simTable, newUser);
+				}
+				recathon_queryEnd(queryDesc,recathoncontext);
+
+				/* Here's the second. */
+				sprintf(querystring,"select * from %s where user1 = %d;",
+					attributes->recModelName,attributes->userID);
+				queryDesc = recathon_queryStart(querystring,&recathoncontext);
+				planstate = queryDesc->planstate;
+
+				for (;;) {
+					int currentUser;
+					float currentSim;
+					GenRating *newUser;
+
+					hslot = ExecProcNode(planstate);
+					if (TupIsNull(hslot)) break;
+
+					currentUser = getTupleInt(hslot,"user2");
+					currentSim = getTupleFloat(hslot,"similarity");
+
+					newUser = (GenRating*) palloc(sizeof(GenRating));
+					newUser->ID = currentUser;
+					/* Pre-generated recommendation doesn't need
+					 * indexes. */
+					newUser->index = -1;
+					newUser->totalSim = currentSim;
+					newUser->next = NULL;
+					hashAdd(recstate->simTable, newUser);
+				}
+				recathon_queryEnd(queryDesc,recathoncontext);
+			}
+
+			break;
+		/* If this is a SVD recommender, we can pre-obtain the user features,
+		 * which stay fixed, and cut the I/O time in half. Of course, if this
+		 * is generated on-the-fly, this is done already. */
+		case SVD:
+			if (attributes->opType != OP_GENERATE) {
+				recstate->userFeatures = (float*) palloc(50*sizeof(float));
+				for (i = 0; i < 50; i++)
+					recstate->userFeatures[i] = 0;
+				sprintf(querystring,"select * from %s where users = %d;",
+					attributes->recModelName,userID);
+				queryDesc = recathon_queryStart(querystring,&recathoncontext);
+				planstate = queryDesc->planstate;
+
+				for (;;) {
+					int feature;
+					float featValue;
+
+					hslot = ExecProcNode(planstate);
+					if (TupIsNull(hslot)) break;
+
+					feature = getTupleInt(hslot,"feature");
+					featValue = getTupleFloat(hslot,"value");
+
+					recstate->userFeatures[feature] = featValue;
+				}
+
+				recathon_queryEnd(queryDesc,recathoncontext);
+			}
+			break;
+		default:
+			elog(ERROR, "invalid recommendation method in prepUserForRating()");
+	}
+
+	/* If we've gotten to this point, this is a valid user, so return true. */
+	pfree(querystring);
+	return true;
 }
 
 /* ----------------------------------------------------------------
@@ -3639,8 +4218,6 @@ hashAdd(GenHash *table, GenRating *item)
 		tempRating = tempRating->next;
 
 	tempRating->next = item;
-
-	return;
 }
 
 /* ----------------------------------------------------------------
@@ -3668,6 +4245,31 @@ hashFind(GenHash *table, int itemID)
 	}
 
 	return NULL;
+}
+
+/* ----------------------------------------------------------------
+ *		freeHash
+ *
+ *		Free a hash table.
+ * ----------------------------------------------------------------
+ */
+void
+freeHash(GenHash *table) {
+	int i;
+
+	for (i = 0; i < table->hash; i++) {
+		GenRating *tempRating;
+
+		tempRating = table->table[i];
+		while (tempRating) {
+			GenRating *tempRating2 = tempRating->next;
+			pfree(tempRating);
+			tempRating = tempRating2;
+		}
+	}
+
+	pfree(table->table);
+	pfree(table);
 }
 
 /* ----------------------------------------------------------------
@@ -3749,9 +4351,9 @@ itemCFpredict(RecScanState *recnode, char *itemmodel, int itemid)
  * ----------------------------------------------------------------
  */
 float
-userCFpredict(RecScanState *recnode, char *ratingval, int itemid)
+userCFpredict(RecScanState *recnode, char *eventval, int itemid)
 {
-	float rating, totalSim, average;
+	float event, totalSim, average;
 	AttributeInfo *attributes;
 	// Query objects;
 	char *querystring;
@@ -3762,18 +4364,18 @@ userCFpredict(RecScanState *recnode, char *ratingval, int itemid)
 
 	attributes = (AttributeInfo*) recnode->attributes;
 
-	rating = 0.0;
+	event = 0.0;
 	totalSim = 0.0;
 	average = recnode->average;
 
-	/* We need to query the ratings table, so that we can
-	 * find all ratings for this item and match them up
+	/* We need to query the events table, so that we can
+	 * find all events for this item and match them up
 	 * with what we have in the similarity matrix. We note
 	 * that it's necessarily true that the user has not
 	 * rated these items. */
 	querystring = (char*) palloc(1024*sizeof(char));
 	sprintf(querystring,"select * from %s where %s = %d;",
-		attributes->ratingtable,attributes->itemkey,itemid);
+		attributes->eventtable,attributes->itemkey,itemid);
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
 
@@ -3786,13 +4388,13 @@ userCFpredict(RecScanState *recnode, char *ratingval, int itemid)
 		if (TupIsNull(qslot)) break;
 
 		currentUserID = getTupleInt(qslot,attributes->userkey);
-		currentRating = getTupleFloat(qslot,ratingval);
+		currentRating = getTupleFloat(qslot,eventval);
 
 		currentUser = hashFind(recnode->simTable,currentUserID);
 		if (!currentUser) continue;
 		similarity = currentUser->totalSim;
 
-		rating += (currentRating - average) * similarity;
+		event += (currentRating - average) * similarity;
 		// Poor man's absolute value of the similarity.
 		if (similarity < 0)
 			similarity *= -1;
@@ -3802,10 +4404,10 @@ userCFpredict(RecScanState *recnode, char *ratingval, int itemid)
 
 	if (totalSim == 0.0) return 0.0;
 
-	rating /= totalSim;
-	rating += average;
+	event /= totalSim;
+	event += average;
 
-	return rating;
+	return event;
 }
 
 /* ----------------------------------------------------------------
@@ -3832,6 +4434,7 @@ SVDpredict(RecScanState *recnode, char *itemmodel, int itemid)
 	querystring = (char*) palloc(1024*sizeof(char));
 	sprintf(querystring,"select * from %s where items = %d;",
 		itemmodel,itemid);
+
 	queryDesc = recathon_queryStart(querystring,&recathoncontext);
 	planstate = queryDesc->planstate;
 
@@ -3866,7 +4469,7 @@ SVDpredict(RecScanState *recnode, char *itemmodel, int itemid)
 		// If there's an error and we didn't find the column.
 		if (feature < 0) continue;
 
-		// Add it into the rating and continue.
+		// Add it into the event and continue.
 		recscore += featValue * userFeatures[feature];
 	}
 
@@ -3885,39 +4488,108 @@ SVDpredict(RecScanState *recnode, char *itemmodel, int itemid)
  * ----------------------------------------------------------------
  */
 void
-applyRecScore(RecScanState *recnode, TupleTableSlot *slot, int itemid)
+applyRecScore(RecScanState *recnode, TupleTableSlot *slot, int itemid, int itemindex)
 {
-	int i, natts;
 	float recscore;
 	AttributeInfo *attributes;
 
 	attributes = (AttributeInfo*) recnode->attributes;
-	natts = slot->tts_tupleDescriptor->natts;
 
 	switch ((recMethod)attributes->method) {
 		case itemCosCF:
 		case itemPearCF:
-			recscore = itemCFpredict(recnode,attributes->recModelName,itemid);
+			if (attributes->opType == OP_GENERATE)
+				recscore = itemCFgenerate(recnode,itemid,itemindex);
+			else
+				recscore = itemCFpredict(recnode,attributes->recModelName,itemid);
 			break;
 		case userCosCF:
 		case userPearCF:
-			recscore = userCFpredict(recnode,attributes->ratingval,itemid);
+			if (attributes->opType == OP_GENERATE)
+				recscore = userCFgenerate(recnode,itemid,itemindex);
+			else
+				recscore = userCFpredict(recnode,attributes->eventval,itemid);
 			break;
 		case SVD:
-			recscore = SVDpredict(recnode,attributes->recModelName2,itemid);
+			if (attributes->opType == OP_GENERATE)
+				recscore = SVDgenerate(recnode,itemid,itemindex);
+			else
+				recscore = SVDpredict(recnode,attributes->recModelName2,itemid);
 			break;
 		default:
 			recscore = -1;
 			break;
 	}
 
-	/* Plug in the data, marking those columns full. */
-	for (i = 0; i < natts; i++) {
-		char* col_name = slot->tts_tupleDescriptor->attrs[i]->attname.data;
-		if (strcmp(col_name,"recscore") == 0) {
-			slot->tts_values[i] = Float4GetDatum(recscore);
-			slot->tts_isnull[i] = false;
-			slot->tts_nvalid++;
+	slot->tts_values[recnode->eventatt] = Float4GetDatum(recscore);
+	slot->tts_isnull[recnode->eventatt] = false;
+}
+
+/* ----------------------------------------------------------------
+ *		applyItemSim
+ *
+ *		This function is one of the first steps in
+ *		item-based CF prediction generation. We take the
+ *		ratings this user has generated and we apply those
+ *		similarity values to our tentative ratings.
+ * ----------------------------------------------------------------
+ */
+void
+applyItemSim(RecScanState *recnode, char *itemmodel)
+{
+	int i;
+	GenHash *ratedTable;
+	// Query objects.
+	char *querystring;
+	QueryDesc *queryDesc;
+	PlanState *planstate;
+	TupleTableSlot *slot;
+	MemoryContext recathoncontext;
+
+	ratedTable = recnode->ratedTable;
+
+	querystring = (char*) palloc(1024*sizeof(char));
+
+	// For every item we've rated, we need to obtain its similarity
+	// scores and apply them to the appropriate items. This is
+	// necessary because we're only storing half of the similarity
+	// matrix.
+	for (i = 0; i < ratedTable->hash; i++) {
+		GenRating *currentItem;
+
+		for (currentItem = ratedTable->table[i]; currentItem;
+				currentItem = currentItem->next) {
+			sprintf(querystring,"select * from %s where item1 = %d;",
+				itemmodel,currentItem->ID);
+			queryDesc = recathon_queryStart(querystring,&recathoncontext);
+			planstate = queryDesc->planstate;
+
+			for (;;) {
+				int itemID;
+				float similarity;
+				GenRating *pendingItem;
+
+				slot = ExecProcNode(planstate);
+				if (TupIsNull(slot)) break;
+
+				itemID = getTupleInt(slot,"item2");
+				similarity = getTupleFloat(slot,"similarity");
+
+				// Find the array slot this item ID corresponds to.
+				// If -1 is returned, then the item ID corresponds to
+				// another item we've rated, so we don't care.
+				pendingItem = hashFind(recnode->pendingTable,itemID);
+				if (pendingItem) {
+					pendingItem->score += similarity*currentItem->score;
+					if (similarity < 0)
+						similarity *= -1;
+					pendingItem->totalSim += similarity;
+				}
+			}
+
+			recathon_queryEnd(queryDesc,recathoncontext);
 		}
 	}
+
+	pfree(querystring);
 }

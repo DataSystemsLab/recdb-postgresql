@@ -42,11 +42,14 @@
 #define ORDER_CLAUSE 0
 #define GROUP_CLAUSE 1
 #define DISTINCT_ON_CLAUSE 2
+/* NEW FOR RECDB */
+#define RECOMMEND_CLAUSE 3
 
 static const char *const clauseText[] = {
 	"ORDER BY",
 	"GROUP BY",
-	"DISTINCT ON"
+	"DISTINCT ON",
+	"RECOMMEND"
 };
 
 static void extractRemainingColumns(List *common_colnames,
@@ -75,8 +78,6 @@ static Node *buildMergedJoinVar(ParseState *pstate, JoinType jointype,
 				   Var *l_colvar, Var *r_colvar);
 static void checkExprIsVarFree(ParseState *pstate, Node *n,
 				   const char *constructName);
-static TargetEntry *findTargetlistEntrySQL92(ParseState *pstate, Node *node,
-						 List **tlist, int clause);
 static TargetEntry *findTargetlistEntrySQL99(ParseState *pstate, Node *node,
 						 List **tlist);
 static int get_matching_location(int sortgroupref,
@@ -1263,7 +1264,7 @@ checkExprIsVarFree(ParseState *pstate, Node *n, const char *constructName)
  * tlist	the target list (passed by reference so we can append to it)
  * clause	identifies clause type being processed
  */
-static TargetEntry *
+TargetEntry *
 findTargetlistEntrySQL92(ParseState *pstate, Node *node, List **tlist,
 						 int clause)
 {

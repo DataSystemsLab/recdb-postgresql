@@ -1010,10 +1010,10 @@ _equalAttributeInfo(const AttributeInfo *a, const AttributeInfo *b)
 	COMPARE_STRING_FIELD(recName);
 	COMPARE_STRING_FIELD(usertable);
 	COMPARE_STRING_FIELD(itemtable);
-	COMPARE_STRING_FIELD(ratingtable);
+	COMPARE_STRING_FIELD(eventtable);
 	COMPARE_STRING_FIELD(userkey);
 	COMPARE_STRING_FIELD(itemkey);
-	COMPARE_STRING_FIELD(ratingval);
+	COMPARE_STRING_FIELD(eventval);
 	COMPARE_SCALAR_FIELD(method);
 	COMPARE_STRING_FIELD(recModelName);
 	COMPARE_STRING_FIELD(recModelName2);

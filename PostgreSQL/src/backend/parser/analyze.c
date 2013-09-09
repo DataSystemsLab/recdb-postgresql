@@ -945,16 +945,16 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 		qry->hasModifyingCTE = pstate->p_hasModifyingCTE;
 	}
 
-	/* NEW CODE FOR RECATHON */
+	/* NEW CODE FOR RECDB */
 	/* We have to transform the recommendClause first, because we might be
 	 * rewriting the rest of the query and that has to happen before we
 	 * do anything else. This won't affect the WITH clause, though, so
 	 * continue to start with that. */
 
-	stmt = transformRecommendClause(pstate, stmt, "RECOMMEND");
-
-	if (stmt->recommendClause)
+	if (stmt->recommendClause) {
+		stmt = transformRecommendClause(pstate, &qry->targetList, stmt, "RECOMMEND");
 		qry->isRecommendStmt = true;
+	}
 	else
 		qry->isRecommendStmt = false;
 
@@ -980,6 +980,15 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 
 	/* mark column origins */
 	markTargetListOrigins(pstate, qry->targetList);
+
+	/* NEW FOR RECDB */
+	/* add RECOMMEND clause elements to the target list */
+	if (stmt->recommendClause) {
+		addRecTargets(pstate, &qry->targetList, stmt->recommendClause);
+//		ereport(ERROR,
+//			(errcode(ERRCODE_SYNTAX_ERROR),
+//			 errmsg("short-circuit end")));
+	}
 
 	/* transform WHERE */
 	qual = transformWhereClause(pstate, stmt->whereClause, "WHERE");

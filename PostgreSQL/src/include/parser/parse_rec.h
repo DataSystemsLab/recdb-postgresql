@@ -17,8 +17,9 @@
 
 #include "parser/parse_node.h"
 
-/* We only have one external function; most of them are static. */
-extern SelectStmt *transformRecommendClause(ParseState *pstate, SelectStmt *stmt,
-					     const char *constructName);
+/* We only have two external functions; most of them are static. */
+extern SelectStmt *transformRecommendClause(ParseState *pstate, List **targetlist,
+					    SelectStmt *stmt, const char *constructName);
+extern void addRecTargets(ParseState *pstate, List **targetlist, Node *recClause);
 
 #endif	/* PARSE_REC_H */

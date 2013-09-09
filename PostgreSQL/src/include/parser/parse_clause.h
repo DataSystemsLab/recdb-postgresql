@@ -43,5 +43,8 @@ extern List *transformDistinctOnClause(ParseState *pstate, List *distinctlist,
 
 extern Index assignSortGroupRef(TargetEntry *tle, List *tlist);
 extern bool targetIsInSortList(TargetEntry *tle, Oid sortop, List *sortList);
+/* NEW FOR RECDB - MADE NON-STATIC */
+extern TargetEntry *findTargetlistEntrySQL92(ParseState *pstate, Node *node,
+						 List **tlist, int clause);
 
 #endif   /* PARSE_CLAUSE_H */

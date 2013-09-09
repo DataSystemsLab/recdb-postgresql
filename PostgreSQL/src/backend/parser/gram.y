@@ -208,12 +208,12 @@ static void processCASbits(int cas_bits, int location, const char *constrType,
 		CreateOpFamilyStmt AlterOpFamilyStmt CreatePLangStmt
 		CreateSchemaStmt CreateSeqStmt CreateStmt CreateRStmt CreateTableSpaceStmt
 		CreateFdwStmt CreateForeignServerStmt CreateForeignTableStmt
-		CreateAssertStmt CreateTrigStmt
+		CreateAssertStmt CreateTrigStmt DropRecStmt
 		CreateUserStmt CreateUserMappingStmt CreateRoleStmt
 		CreatedbStmt DeclareCursorStmt DefineStmt DeleteStmt DiscardStmt DoStmt
 		DropGroupStmt DropOpClassStmt DropOpFamilyStmt DropPLangStmt DropStmt
 		DropAssertStmt DropTrigStmt DropRuleStmt DropCastStmt DropRoleStmt
-		DropUserStmt DropdbStmt DropTableSpaceStmt DropFdwStmt DropRecStmt
+		DropUserStmt DropdbStmt DropTableSpaceStmt DropFdwStmt 
 		DropForeignServerStmt DropUserMappingStmt ExplainStmt FetchStmt
 		GrantStmt GrantRoleStmt IndexStmt InsertStmt ListenStmt LoadStmt
 		LockStmt NotifyStmt ExplainableStmt PreparableStmt
@@ -235,7 +235,7 @@ static void processCASbits(int cas_bits, int location, const char *constrType,
 %type <ival>	add_drop opt_asc_desc opt_nulls_order
 
 %type <node>	alter_table_cmd alter_type_cmd opt_collate_clause
-%type <list>	alter_table_cmds alter_type_cmds CreateRAtts
+%type <list>	alter_table_cmds alter_type_cmds
 
 %type <dbehavior>	opt_drop_behavior
 
@@ -379,7 +379,7 @@ static void processCASbits(int cas_bits, int location, const char *constrType,
 %type <node>	def_arg columnElem where_clause where_or_current_clause
 				a_expr b_expr c_expr func_expr AexprConst indirection_el
 				columnref in_expr having_clause func_table array_expr
-				ExclusionWhereClause
+				ExclusionWhereClause recommend_clause
 %type <list>	ExclusionConstraintList ExclusionConstraintElem
 %type <list>	func_arg_list
 %type <node>	func_arg_expr
@@ -507,7 +507,7 @@ static void processCASbits(int cas_bits, int location, const char *constrType,
 	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DESC
 	DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P DOUBLE_P DROP
 
-	EACH ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EXCEPT
+	EACH ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENTS EXCEPT
 	EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
 	EXTENSION EXTERNAL EXTRACT
 
@@ -546,7 +546,7 @@ static void processCASbits(int cas_bits, int location, const char *constrType,
 
 	QUOTE
 
-	RANGE RATINGS READ REAL REASSIGN RECHECK RECOMMENDER RECURSIVE REF
+	RANGE READ REAL REASSIGN RECHECK RECOMMEND RECOMMENDER RECURSIVE REF
 	REFERENCES REINDEX RELATIVE_P RELEASE RENAME REPEATABLE REPLACE REPLICA
 	RESET RESTART RESTRICT RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK
 	ROW ROWS RULE
@@ -2441,50 +2441,34 @@ copy_generic_opt_arg_list_item:
  *
  *****************************************************************************/
 
-CreateRStmt:	CREATE RECOMMENDER qualified_name
-			USERS FROM qualified_name KEY ColId
-			ITEMS FROM qualified_name KEY ColId
-			RATINGS FROM qualified_name VALUE_P ColId
-			CreateRAtts
+CreateRStmt:	CREATE RECOMMENDER ON qualified_name
+			USERS FROM ColId
+			ITEMS FROM ColId
+			EVENTS FROM ColId
 			USING ColId
 				{
 					CreateRStmt *n = makeNode(CreateRStmt);
-					$3->relpersistence = RELPERSISTENCE_PERMANENT;
-					n->relation = $3;
-					n->usertable = $6;
-					n->userkey = $8;
-					n->itemtable = $11;
-					n->itemkey = $13;
-					n->ratingtable = $16;
-					n->ratingval = $18;
-					n->attributes = $19;
-					n->method = $21;
+					n->eventtable = $4;
+					n->userkey = $7;
+					n->itemkey = $10;
+					n->eventval = $13;
+					n->method = $15;
 					$$ = (Node *)n;
 				}
-		|	CREATE RECOMMENDER qualified_name
-			USERS FROM qualified_name KEY ColId
-			ITEMS FROM qualified_name KEY ColId
-			RATINGS FROM qualified_name VALUE_P ColId
-			CreateRAtts
+		|	CREATE RECOMMENDER ON qualified_name
+			USERS FROM ColId
+			ITEMS FROM ColId
+			EVENTS FROM ColId
 				{
 					CreateRStmt *n = makeNode(CreateRStmt);
-					$3->relpersistence = RELPERSISTENCE_PERMANENT;
-					n->relation = $3;
-					n->usertable = $6;
-					n->userkey = $8;
-					n->itemtable = $11;
-					n->itemkey = $13;
-					n->ratingtable = $16;
-					n->ratingval = $18;
-					n->attributes = $19;
+					n->eventtable = $4;
+					n->userkey = $7;
+					n->itemkey = $10;
+					n->eventval = $13;
 					n->method = NULL;
 					$$ = (Node *)n;
 				}
 		;
-
-CreateRAtts:	ATTRIBUTES any_name_list	{$$ = $2;}
-		| /* EMPTY */			{$$ = NIL;}
-		;	
 
 /*****************************************************************************
  *
@@ -2493,11 +2477,11 @@ CreateRAtts:	ATTRIBUTES any_name_list	{$$ = $2;}
  *
  *****************************************************************************/
 
-DropRecStmt:	DROP RECOMMENDER qualified_name
+DropRecStmt:	DROP RECOMMENDER ON qualified_name USING ColId
 				{
 					DropRecStmt *n = makeNode(DropRecStmt);
-					$3->relpersistence = RELPERSISTENCE_PERMANENT;
-					n->recommender = $3;
+					n->eventtable = $4;
+					n->method = $6;
 					$$ = (Node *)n;
 				}
 		;
@@ -8886,13 +8870,12 @@ select_clause:
  * NOTE: only the leftmost component SelectStmt should have INTO.
  * However, this is not checked by the grammar; parse analysis must check it.
  *
- * NOTE FOR RECATHON: the explicit RECOMMEND clause has been removed. We now assume
- * that if a user tries to query a recommender, which doesn't actually exist as a
- * real table in the schema, they are trying to acquire recommendations.
+ * NOTE FOR RECDB: we now have an optional RECOMMEND clause that will build a model
+ * on the fly for recommendation generation.
  */
 simple_select:
 			SELECT opt_distinct target_list
-			into_clause from_clause where_clause
+			into_clause from_clause recommend_clause where_clause
 			group_clause having_clause window_clause
 				{
 					SelectStmt *n = makeNode(SelectStmt);
@@ -8900,11 +8883,11 @@ simple_select:
 					n->targetList = $3;
 					n->intoClause = $4;
 					n->fromClause = $5;
-					n->whereClause = $6;
-					n->groupClause = $7;
-					n->havingClause = $8;
-					n->windowClause = $9;
-					n->recommendClause = NULL;
+					n->whereClause = $7;
+					n->groupClause = $8;
+					n->havingClause = $9;
+					n->windowClause = $10;
+					n->recommendClause = $6;
 					$$ = (Node *)n;
 				}
 			| values_clause							{ $$ = $1; }
@@ -8939,6 +8922,28 @@ simple_select:
 				{
 					$$ = makeSetOp(SETOP_EXCEPT, $3, $1, $4);
 				}
+		;
+
+/*
+ * RecDB RECOMMEND clause looks like:
+ *
+ * RECOMMEND <item> TO <user> ON <events> USING <method>
+ */
+recommend_clause:
+		RECOMMEND columnref TO columnref ON columnref USING ColId
+			{
+				RecommendInfo *n = makeNode(RecommendInfo);
+				n->userkey = $4;
+				n->itemkey = $2;
+				n->eventval = $6;
+				n->strmethod = $8;
+				n->recommender = NULL;
+				n->attributes = NULL;
+				n->opType = OP_GENERATE;
+				$$ = (Node *) n;
+			}
+		| /* EMPTY */
+			{ $$ = NULL; }
 		;
 
 /*
@@ -12379,6 +12384,7 @@ unreserved_keyword:
 			| ENCRYPTED
 			| ENUM_P
 			| ESCAPE
+			| EVENTS
 			| EXCLUDE
 			| EXCLUDING
 			| EXCLUSIVE
@@ -12473,7 +12479,6 @@ unreserved_keyword:
 			| PROCEDURE
 			| QUOTE
 			| RANGE
-			| RATINGS
 			| READ
 			| REASSIGN
 			| RECHECK
@@ -12724,6 +12729,7 @@ reserved_keyword:
 			| ORDER
 			| PLACING
 			| PRIMARY
+			| RECOMMEND
 			| REFERENCES
 			| RETURNING
 			| SELECT

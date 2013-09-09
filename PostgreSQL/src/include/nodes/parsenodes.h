@@ -65,7 +65,8 @@ typedef enum {
 	OP_NOFILTER,
 	OP_JOIN,
 	OP_JOINPARTNER,
-	OP_INDEX
+	OP_INDEX,
+	OP_GENERATE
 } recathon_optype;
 
 /*
@@ -1473,28 +1474,22 @@ typedef struct VariableShowStmt
 typedef struct CreateRStmt
 {
 	NodeTag		type;
-	RangeVar	*relation;	/* relation to create, the table name */
-	RangeVar	*usertable;	/* reference to users table */
+	RangeVar	*eventtable;	/* reference to events table */
 	char		*userkey;	/* users table key */
-	RangeVar	*itemtable;	/* reference to items table */
 	char		*itemkey;	/* items table key */
-	RangeVar	*ratingtable;	/* reference to ratings table */
-	char		*ratingval;	/* ratings table value */
-	List		*attributes;	/* recommendation attributes */
+	char		*eventval;	/* events table value */
 	char		*method;	/* the method we use for recommendation */
 } CreateRStmt;
 
 /* ----------------------
  *		Drop Recommender Statement
- *
- *		Only has one field, but we need it to be identifiable
- *		for what it is by its tag.
  * ----------------------
  */
 typedef struct DropRecStmt
 {
 	NodeTag		type;
-	RangeVar	*recommender;	/* the recommender to be deleted */
+	RangeVar	*eventtable;	/* the event table used */
+	char		*method;	/* the method used */
 } DropRecStmt;
 
 /* ----------------------
@@ -1509,11 +1504,12 @@ typedef struct AttributeInfo
 	char		*recName;
 	char		*usertable;
 	char		*itemtable;
-	char		*ratingtable;
+	char		*eventtable;
 	char		*userkey;
 	char		*itemkey;
-	char		*ratingval;
+	char		*eventval;
 	int		method;
+	char		*recIndexName;
 	char		*recModelName;
 	char		*recModelName2;
 	char		*recViewName;
@@ -1529,6 +1525,10 @@ typedef struct AttributeInfo
 typedef struct RecommendInfo
 {
 	NodeTag			type;
+	Node			*userkey;
+	Node			*itemkey;
+	Node			*eventval;
+	char			*strmethod;
 	RangeVar		*recommender;
 	AttributeInfo		*attributes;
 	recathon_optype		opType;

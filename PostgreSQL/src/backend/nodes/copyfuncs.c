@@ -2533,10 +2533,10 @@ _copyAttributeInfo(const AttributeInfo *from)
 	COPY_STRING_FIELD(recName);
 	COPY_STRING_FIELD(usertable);
 	COPY_STRING_FIELD(itemtable);
-	COPY_STRING_FIELD(ratingtable);
+	COPY_STRING_FIELD(eventtable);
 	COPY_STRING_FIELD(userkey);
 	COPY_STRING_FIELD(itemkey);
-	COPY_STRING_FIELD(ratingval);
+	COPY_STRING_FIELD(eventval);
 	COPY_SCALAR_FIELD(method);
 	COPY_STRING_FIELD(recModelName);
 	COPY_STRING_FIELD(recModelName2);

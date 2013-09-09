@@ -145,8 +145,16 @@ ExecRecJoin(RecJoinState *recjoin)
 		}
 
 		/* We construct a new tuple on the fly. */
-		outerTupleSlot = MakeSingleTupleTableSlot(CreateTupleDescCopy(recnode->base_slot));
+		outerTupleSlot = MakeSingleTupleTableSlot(recnode->base_slot);
 		outerTupleSlot->tts_isempty = false;
+
+		/* Mark all slots as non-empty. */
+		natts = outerTupleSlot->tts_tupleDescriptor->natts;
+		for (i = 0; i < natts; i++) {
+			/* Mark slot. */
+			outerTupleSlot->tts_isnull[i] = false;
+			outerTupleSlot->tts_nvalid++;
+		}
 
 		/*
 		 * we have an outerTuple, try to get the next inner tuple.
@@ -180,19 +188,10 @@ ExecRecJoin(RecJoinState *recjoin)
 		/*
 		 * We're ok to construct a tuple at this point.
 		 */
-		natts = outerTupleSlot->tts_tupleDescriptor->natts;
-		for (i = 0; i < natts; i++) {
-			char* col_name = outerTupleSlot->tts_tupleDescriptor->attrs[i]->attname.data;
-			if (strcmp(col_name,attributes->userkey) == 0) {
-				outerTupleSlot->tts_values[i] = Int32GetDatum(userID);
-				outerTupleSlot->tts_isnull[i] = false;
-				outerTupleSlot->tts_nvalid++;
-			} else if (strcmp(col_name,attributes->itemkey) == 0) {
-				outerTupleSlot->tts_values[i] = Int32GetDatum(innerItemID);
-				outerTupleSlot->tts_isnull[i] = false;
-				outerTupleSlot->tts_nvalid++;
-			}
-		}
+		outerTupleSlot->tts_values[recnode->useratt] = Int32GetDatum(userID);
+		outerTupleSlot->tts_isnull[recnode->useratt] = false;
+		outerTupleSlot->tts_values[recnode->itematt] = Int32GetDatum(innerItemID);
+		outerTupleSlot->tts_isnull[recnode->itematt] = false;
 
 		econtext->ecxt_outertuple = outerTupleSlot;
 
@@ -238,7 +237,8 @@ ExecRecJoin(RecJoinState *recjoin)
 				 * the RecScore before joining the tuples and sending
 				 * them on their happy way.
  				 */
-				applyRecScore(recnode, outerTupleSlot, innerItemID);
+				int itemindex = binarySearch(recnode->fullItemList, innerItemID, 0, recnode->fullTotalItems);
+				applyRecScore(recnode, outerTupleSlot, innerItemID, itemindex);
 
 				ENL1_printf("qualification succeeded, projecting tuple");
 
@@ -296,6 +296,7 @@ ExecInitRecJoin(RecJoin *node, EState *estate, int eflags)
 
 		tempItem = (GenRating*) palloc(sizeof(GenRating));
 		tempItem->ID = currentItem;
+		tempItem->index = -1;
 		tempItem->next = NULL;
 
 		hashAdd(rjstate->itemTable,tempItem);

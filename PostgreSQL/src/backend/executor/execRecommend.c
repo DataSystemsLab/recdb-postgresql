@@ -41,7 +41,6 @@ static TupleTableSlot* ExecIndexRecommend(RecScanState *recnode,
 static TupleTableSlot* ExecFilterRecommend(RecScanState *recnode,
 					 ExecScanAccessMtd accessMtd,
 					 ExecScanRecheckMtd recheckMtd);
-static void applyItemSim(RecScanState *recnode, char *itemmodel);
 
 /*
  * ExecRecFetch -- fetch next potential tuple
@@ -350,7 +349,7 @@ ExecFilterRecommend(RecScanState *recnode,
 	for (;;)
 	{
 		TupleTableSlot *slot;
-		int natts, i, userID, itemID, itemindex;
+		int natts, i, userID, userindex, itemID, itemindex;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -366,6 +365,7 @@ ExecFilterRecommend(RecScanState *recnode,
 		 */
 		if (recnode->finished) {
 			recnode->finished = false;
+			recnode->userNum = 0;
 			recnode->itemNum = 0;
 			return NULL;
 		}
@@ -375,57 +375,152 @@ ExecFilterRecommend(RecScanState *recnode,
 		 * many new tuples as we want. */
 		if (recnode->base_slot == NULL) {
 			slot = ExecRecFetch(node, accessMtd, recheckMtd);
-			recnode->base_slot = slot->tts_tupleDescriptor;
+			recnode->base_slot = CreateTupleDescCopy(slot->tts_tupleDescriptor);
 		}
 
 		/* Create a new slot to operate on. */
-		slot = MakeSingleTupleTableSlot(CreateTupleDescCopy(recnode->base_slot));
+		slot = MakeSingleTupleTableSlot(recnode->base_slot);
 		slot->tts_isempty = false;
-
-		/*
-		 * We now have a blank tuple slot that we need to fill with data.
-		 * We already have the user ID, we can quickly fetch the next
-		 * item ID, and we need to calculate the RecScore.
-		 */
-
-		userID = -1; itemID = -1;
-		natts = slot->tts_tupleDescriptor->natts;
-
-		/* We'll replace the user ID and item ID. */
-		userID = attributes->userID;
-		itemindex = recnode->itemNum;
-		itemID = recnode->itemList[itemindex];
-
-		/* Plug in the data, marking those columns full. */
-		for (i = 0; i < natts; i++) {
-			char* col_name = slot->tts_tupleDescriptor->attrs[i]->attname.data;
-			if (strcmp(col_name,attributes->userkey) == 0) {
-				slot->tts_values[i] = Int32GetDatum(userID);
-				slot->tts_isnull[i] = false;
-				slot->tts_nvalid++;
-			} else if (strcmp(col_name,attributes->itemkey) == 0) {
-				slot->tts_values[i] = Int32GetDatum(itemID);
-				slot->tts_isnull[i] = false;
-				slot->tts_nvalid++;
-			}
-		}
-
-		/* It's possible our filter criteria involves the RecScore somehow.
-		 * If that's the case, we need to calculate it before we do the
-		 * qual filtering. Also, if we're doing a JoinRecommend, we should
-		 * not calculate the RecScore in this node. */
-		if (attributes->opType == OP_NOFILTER)
-			applyRecScore(recnode, slot, itemID);
-
-		/* Move onto the next item, for next time. */
-		recnode->itemNum++;
-		if (recnode->itemNum >= recnode->totalItems)
-			recnode->finished = true;
 
 		/*
 		 * place the current tuple into the expr context
 		 */
 		econtext->ecxt_scantuple = slot;
+
+		/* Mark all slots as usable. */
+		natts = slot->tts_tupleDescriptor->natts;
+		for (i = 0; i < natts; i++) {
+			/* Mark slot. */
+			slot->tts_values[i] = Int32GetDatum(0);
+			slot->tts_isnull[i] = false;
+			slot->tts_nvalid++;
+		}
+
+		/* While we're here, record what tuple attributes
+		 * correspond to our key columns. This will save
+		 * us unnecessary strcmp functions. */
+		if (recnode->useratt < 0) {
+			for (i = 0; i < natts; i++) {
+				char* col_name = slot->tts_tupleDescriptor->attrs[i]->attname.data;
+//printf("%s\n",col_name);
+				if (strcmp(col_name,attributes->userkey) == 0)
+					recnode->useratt = i;
+				else if (strcmp(col_name,attributes->itemkey) == 0)
+					recnode->itematt = i;
+				else if (strcmp(col_name,attributes->eventval) == 0)
+					recnode->eventatt = i;
+
+				/* Mark slot. */
+				slot->tts_isnull[i] = false;
+				slot->tts_nvalid++;
+			}
+		}
+
+		/*
+		 * We now have a problem: we need to create prediction structures
+		 * for a user before we do filtering, so that we can have a proper
+		 * item list. But we also need to filter before creating those
+		 * structures, so we don't end up taking forever with it. The
+		 * solution is to filter twice.
+		 */
+		userID = -1; itemID = -1;
+
+		/* First, replace the user ID. */
+		userindex = recnode->userNum;
+		userID = recnode->userList[userindex];
+
+		/*
+		 * We now have a blank tuple slot that we need to fill with data.
+		 * We have a working user ID, but not a valid item list. We'd like to
+		 * use the filter to determine if this is a good user, but we can't
+		 * do that without an item, in many cases. The solution is to add in
+		 * dummy items, then compare it against the filter. If a given user ID
+		 * doesn't make it past the filter with any item ID, then that user is
+		 * being filtered out, and we'll move on to the next.
+		 */
+		if (recnode->newUser) {
+			recnode->fullItemNum = 0;
+			itemindex = recnode->fullItemNum;
+			itemID = recnode->fullItemList[itemindex];
+
+			slot->tts_values[recnode->useratt] = Int32GetDatum(userID);
+			slot->tts_values[recnode->itematt] = Int32GetDatum(itemID);
+			slot->tts_values[recnode->eventatt] = Int32GetDatum(-1);
+
+			/* We have a preliminary slot - let's test it. */
+			while (qual && !ExecQual(qual, econtext, false)) {
+				/* We failed the test. Try the next item. */
+				recnode->fullItemNum++;
+				if (recnode->fullItemNum >= recnode->fullTotalItems) {
+					/* If we've reached the last item, move onto the next user.
+					 * If we've reached the last user, we're done. */
+					InstrCountFiltered1(node, recnode->fullTotalItems);
+					recnode->userNum++;
+					recnode->newUser = true;
+					recnode->fullItemNum = 0;
+					if (recnode->userNum >= recnode->totalUsers) {
+						recnode->userNum = 0;
+						recnode->itemNum = 0;
+						return NULL;
+					}
+					userindex = recnode->userNum;
+					userID = recnode->userList[userindex];
+				}
+
+				itemindex = recnode->fullItemNum;
+				itemID = recnode->fullItemList[itemindex];
+				slot->tts_values[recnode->useratt] = Int32GetDatum(userID);
+				slot->tts_values[recnode->itematt] = Int32GetDatum(itemID);
+			}
+
+			/* If we get here, then we found a user who will be actually
+			 * returned in the results. */
+		}
+
+		/* Mark the user ID and index. */
+		attributes->userID = userID;
+		recnode->userindex = recnode->userNum;
+
+		/* With the user ID determined, we need to investigate and see
+		 * if this is a new user. If so, attempt to create prediction
+		 * data structures, or report that this user is invalid. We have
+		 * to do this here, so we can establish the item list. */
+		if (recnode->newUser) {
+			recnode->validUser = prepUserForRating(recnode,userID);
+			recnode->newUser = false;
+		}
+
+		/* Now replace the item ID, if the user is valid. Otherwise,
+		 * leave the item ID as is, as it doesn't matter what it is. */
+		itemindex = recnode->itemNum;
+		if (recnode->validUser)
+			itemID = recnode->itemList[itemindex];
+
+		/* Plug in the data, marking those columns full. We also need to
+		 * mark the rating column with something temporary. */
+		slot->tts_values[recnode->useratt] = Int32GetDatum(userID);
+		slot->tts_values[recnode->itematt] = Int32GetDatum(itemID);
+		slot->tts_values[recnode->eventatt] = Int32GetDatum(-1);
+
+		/* It's possible our filter criteria involves the RecScore somehow.
+		 * If that's the case, we need to calculate it before we do the
+		 * qual filtering. Also, if we're doing a JoinRecommend, we should
+		 * not calculate the RecScore in this node. In the current version
+		 * of RecDB, an OP_NOFILTER shouldn't be allowed. */
+		if (attributes->opType == OP_NOFILTER)
+			applyRecScore(recnode, slot, itemID, itemindex);
+
+		/* Move onto the next item, for next time. */
+		recnode->itemNum++;
+		if (recnode->itemNum >= recnode->totalItems) {
+			/* If we've reached the last item, move onto the next user.
+			 * If we've reached the last user, we're done. */
+			recnode->userNum++;
+			recnode->newUser = true;
+			recnode->itemNum = 0;
+			if (recnode->userNum >= recnode->totalUsers)
+				recnode->finished = true;
+		}
 
 		/*
 		 * check that the current tuple satisfies the qual-clause
@@ -437,11 +532,22 @@ ExecFilterRecommend(RecScanState *recnode,
 		if (!qual || ExecQual(qual, econtext, false))
 		{
 			/*
+			 * If this is an invalid user, then we'll skip this tuple,
+			 * adding one to the filter count.
+			 */
+			if (!recnode->validUser) {
+				InstrCountFiltered1(node, 1);
+				ResetExprContext(econtext);
+				ExecDropSingleTupleTableSlot(slot);
+				continue;
+			}
+
+			/*
 			 * Found a satisfactory scan tuple. This is usually when
 			 * we will calculate and apply the RecScore.
 			 */
-			if (attributes->opType == OP_FILTER)
-				applyRecScore(recnode, slot, itemID);
+			if (attributes->opType == OP_FILTER || attributes->opType == OP_GENERATE)
+				applyRecScore(recnode, slot, itemID, itemindex);
 
 			if (projInfo)
 			{
@@ -474,75 +580,9 @@ ExecFilterRecommend(RecScanState *recnode,
 		 * Tuple fails qual, so free per-tuple memory and try again.
 		 */
 		ResetExprContext(econtext);
+		ExecDropSingleTupleTableSlot(slot);
 	}
 
-}
-
-/*
- * applyItemSim
- *
- * This function is one of the first steps in item-based CF prediction
- * generation. We take the ratings this user has generated and we
- * apply those similarity values to our tentative ratings.
- */
-static void
-applyItemSim(RecScanState *recnode, char *itemmodel)
-{
-	int i;
-	GenHash *ratedTable;
-	// Query objects.
-	char *querystring;
-	QueryDesc *queryDesc;
-	PlanState *planstate;
-	TupleTableSlot *slot;
-	MemoryContext recathoncontext;
-
-	ratedTable = recnode->ratedTable;
-
-	querystring = (char*) palloc(1024*sizeof(char));
-
-	// For every item we've rated, we need to obtain its similarity
-	// scores and apply them to the appropriate items. This is
-	// necessary because we're only storing half of the similarity
-	// matrix.
-	for (i = 0; i < ratedTable->hash; i++) {
-		GenRating *currentItem;
-
-		for (currentItem = ratedTable->table[i]; currentItem;
-				currentItem = currentItem->next) {
-			sprintf(querystring,"select * from %s where item1 = %d;",
-				itemmodel,currentItem->ID);
-			queryDesc = recathon_queryStart(querystring,&recathoncontext);
-			planstate = queryDesc->planstate;
-
-			for (;;) {
-				int itemID;
-				float similarity;
-				GenRating *pendingItem;
-
-				slot = ExecProcNode(planstate);
-				if (TupIsNull(slot)) break;
-
-				itemID = getTupleInt(slot,"item2");
-				similarity = getTupleFloat(slot,"similarity");
-
-				// Find the array slot this item ID corresponds to.
-				// If -1 is returned, then the item ID corresponds to
-				// another item we've rated, so we don't care.
-				pendingItem = hashFind(recnode->pendingTable,itemID);
-				if (pendingItem) {
-					pendingItem->score += similarity*currentItem->score;
-					if (similarity < 0)
-						similarity *= -1;
-					pendingItem->totalSim += similarity;
-				}
-			}
-
-			recathon_queryEnd(queryDesc,recathoncontext);
-		}
-	}
-
-	pfree(querystring);
 }
 
 /*
@@ -667,7 +707,7 @@ ExecInitRecScan(RecScan *node, EState *estate, int eflags)
 	recstate->attributes = (Node*) ((RecommendInfo*)node->recommender)->attributes;
 	attributes = (AttributeInfo *) recstate->attributes;
 
-	/* Code for a future version of Recathon. */
+	/* Code for a future version of RecDB. */
 /*	switch(attributes->cellType) {
 		case CELL_ALPHA:
 			{
@@ -702,262 +742,166 @@ ExecInitRecScan(RecScan *node, EState *estate, int eflags)
 			break;
 	}
 */
-	/* We need to obtain a full list of all the items we need to calculate
-	 * a score for. First count, then query. */
+	/* Our next step is to get the list of all users who participated in the
+	 * events table. At the least, we need to consider each one up until the
+	 * point where WHERE filters are applied. Any user IDs that survive that
+	 * filter will have structures created for recommendation. */
+	/* Note: if we're generating recommendations on-the-fly, we may not need
+	 * to do this, as this list may be created as a side effect. */
+
 	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"select count(%s) from %s where %s not in (select distinct %s from %s where %s = %d);",
-		attributes->itemkey,attributes->itemtable,attributes->itemkey,
-		attributes->itemkey,attributes->ratingtable,attributes->userkey,
-		attributes->userID);
-//printf("%s\n",querystring);
-	queryDesc = recathon_queryStart(querystring,&recathoncontext);
-	planstate = queryDesc->planstate;
-	hslot = ExecProcNode(planstate);
-	recstate->totalItems = getTupleInt(hslot,"count");
-	recathon_queryEnd(queryDesc,recathoncontext);
-
-	/* It's highly unlikely, but possible, that someone has rated literally
-	 * every item. */
-	if (recstate->totalItems <= 0)
-		elog(ERROR, "user %d has rated all items, no predictions to be made",
-			attributes->userID);
-
-	recstate->itemList = (int*) palloc(recstate->totalItems*sizeof(int));
-	recstate->itemNum = 0;
-
-	/* Now for the actual query. */
-	sprintf(querystring,"select * from %s where %s not in (select distinct %s from %s where %s = %d) order by %s;",
-		attributes->itemtable,attributes->itemkey,
-		attributes->itemkey,attributes->ratingtable,attributes->userkey,
-		attributes->userID,attributes->itemkey);
-//printf("%s\n",querystring);
-	queryDesc = recathon_queryStart(querystring,&recathoncontext);
-	planstate = queryDesc->planstate;
-
-	i = 0;
-	for (;;) {
-		int currentItem;
-
+	if (attributes->opType != OP_GENERATE ||
+	    attributes->method == itemCosCF ||
+	    attributes->method == itemPearCF) {
+		sprintf(querystring,"select count(distinct %s) from %s;",
+			attributes->userkey,attributes->eventtable);
+		queryDesc = recathon_queryStart(querystring,&recathoncontext);
+		planstate = queryDesc->planstate;
 		hslot = ExecProcNode(planstate);
-		if (TupIsNull(hslot)) break;
+		recstate->totalUsers = getTupleInt(hslot,"count");
+		recathon_queryEnd(queryDesc,recathoncontext);
 
-		currentItem = getTupleInt(hslot,attributes->itemkey);
+		/* In the event that there are no user IDs, our ratings table is empty, so
+		 * we can't do anything. */
+		if (recstate->totalUsers <= 0)
+			elog(ERROR, "no ratings in table %s, cannot predict ratings",
+				attributes->eventtable);
 
-		recstate->itemList[i] = currentItem;
-		i++;
-		if (i >= recstate->totalItems) break;
+		recstate->userList = (int*) palloc(recstate->totalUsers*sizeof(int));
+		recstate->userNum = 0;
+
+		/* Now for the actual query. */
+		sprintf(querystring,"select distinct %s from %s order by %s;",
+			attributes->userkey,attributes->eventtable,attributes->userkey);
+		queryDesc = recathon_queryStart(querystring,&recathoncontext);
+		planstate = queryDesc->planstate;
+
+		i = 0;
+		for (;;) {
+			int currentUser;
+
+			hslot = ExecProcNode(planstate);
+			if (TupIsNull(hslot)) break;
+
+			currentUser = getTupleInt(hslot,attributes->userkey);
+
+			recstate->userList[i] = currentUser;
+			i++;
+			if (i >= recstate->totalUsers) break;
+		}
+		recathon_queryEnd(queryDesc,recathoncontext);
+
+		/* Quick error protection. */
+		recstate->totalUsers = i;
+		if (recstate->totalUsers <= 0)
+			elog(ERROR, "no ratings in table %s, cannot predict ratings",
+				attributes->eventtable);
+
+		/* Lastly, initialize the attributes->userID. */
+		attributes->userID = recstate->userList[0] - 1;
 	}
-	recathon_queryEnd(queryDesc,recathoncontext);
 
-	/* Quick error protection. */
-	recstate->totalItems = i;
-	if (recstate->totalItems <= 0)
-		elog(ERROR, "user %d has rated all items, no predictions to be made",
-			attributes->userID);
+	/* Next, for annoying and convoluted reasons, we need a full list of all the
+	 * items in the rating table. This will help us circumvent some filter issues
+	 * while remaining as efficient as we can manage. */
+	if (attributes->opType != OP_GENERATE ||
+	    attributes->method == userCosCF ||
+	    attributes->method == userPearCF) {
+		sprintf(querystring,"select count(distinct %s) from %s;",
+			attributes->itemkey,attributes->eventtable);
+		queryDesc = recathon_queryStart(querystring,&recathoncontext);
+		planstate = queryDesc->planstate;
+		hslot = ExecProcNode(planstate);
+		recstate->fullTotalItems = getTupleInt(hslot,"count");
+		recathon_queryEnd(queryDesc,recathoncontext);
 
-	switch ((recMethod) attributes->method) {
-		/* If this is an item-based CF recommender, we can pre-obtain
-		 * the ratings of this user, and add in their contributions to
-		 * the scores of all the other items. */
-		case itemCosCF:
-		case itemPearCF:
-			/* The rated list is all of the items this user has
-			 * rated already. We store the ratings now and we'll
-			 * use them during calculation. */
-			sprintf(querystring,"select count(*) from %s where %s = %d;",
-				attributes->ratingtable,attributes->userkey,attributes->userID);
-			queryDesc = recathon_queryStart(querystring,&recathoncontext);
-			planstate = queryDesc->planstate;
-			hslot = ExecProcNode(planstate);
-			recstate->totalRatings = getTupleInt(hslot,"count");
-			recathon_queryEnd(queryDesc,recathoncontext);
+		/* In the event that there are no item IDs, our ratings table is empty, so
+		 * we can't do anything. */
+		if (recstate->fullTotalItems <= 0)
+			elog(ERROR, "no ratings in table %s, cannot predict ratings",
+				attributes->eventtable);
 
-			/* It's possible that someone has rated no items. */
-			if (recstate->totalRatings <= 0)
-				elog(ERROR, "user %d has rated no items, no predictions can be made",
-					attributes->userID);
+		recstate->fullItemList = (int*) palloc(recstate->fullTotalItems*sizeof(int));
+		recstate->fullItemNum = 0;
 
-			recstate->ratedTable = hashCreate(recstate->totalRatings);
+		/* Now for the actual query. */
+		sprintf(querystring,"select distinct %s from %s order by %s;",
+			attributes->itemkey,attributes->eventtable,attributes->itemkey);
+		queryDesc = recathon_queryStart(querystring,&recathoncontext);
+		planstate = queryDesc->planstate;
 
-			/* Now to acquire the actual ratings. */
-			sprintf(querystring,"select * from %s where %s = %d order by %s;",
-				attributes->ratingtable,attributes->userkey,
-				attributes->userID,attributes->itemkey);
-			queryDesc = recathon_queryStart(querystring,&recathoncontext);
-			planstate = queryDesc->planstate;
-
-			i = 0;
-			for (;;) {
-				int currentItem;
-				float currentRating;
-				GenRating *newItem;
-
-				hslot = ExecProcNode(planstate);
-				if (TupIsNull(hslot)) break;
-
-				currentItem = getTupleInt(hslot,attributes->itemkey);
-				currentRating = getTupleFloat(hslot,attributes->ratingval);
-
-				newItem = (GenRating*) palloc(sizeof(GenRating));
-				newItem->ID = currentItem;
-				newItem->score = currentRating;
-				newItem->next = NULL;
-				hashAdd(recstate->ratedTable, newItem);
-
-				i++;
-				if (i >= recstate->totalRatings) break;
-			}
-			recathon_queryEnd(queryDesc,recathoncontext);
-
-			/* Quick error protection. Again, I don't know how this could
-			 * possibly happen, but better safe than sorry. */
-			recstate->totalRatings = i;
-			if (recstate->totalRatings <= 0)
-				elog(ERROR, "user %d has rated no items, no predictions can be made",
-					attributes->userID);
-
-			/* The pending list is all of the items we have yet to
-			 * calculate ratings for. We need to maintain partial
-			 * scores and similarity sums for each one. */
-			recstate->pendingTable = hashCreate(recstate->totalItems);
-			for (i = 0; i < recstate->totalItems; i++) {
-				GenRating *newItem;
-
-				newItem = (GenRating*) palloc(sizeof(GenRating));
-				newItem->ID = recstate->itemList[i];
-				newItem->score = 0.0;
-				newItem->totalSim = 0.0;
-				newItem->next = NULL;
-				hashAdd(recstate->pendingTable, newItem);
-			}
-
-			/* With another function, we apply the ratings and similarities
-			 * from the rated items to the unrated ones. It's good to get
-			 * this done early, as this will allow the operator to be
-			 * non-blocking, which is important. */
-			applyItemSim(recstate, attributes->recModelName);
-
-			break;
-		case userCosCF:
-		case userPearCF:
-			/* The first thing we'll do is obtain the average rating. */
-			sprintf(querystring,"select avg(%s) as average from %s where %s = %d;",
-				attributes->ratingval,attributes->ratingtable,
-				attributes->userkey,attributes->userID);
-			queryDesc = recathon_queryStart(querystring,&recathoncontext);
-			planstate = queryDesc->planstate;
+		i = 0;
+		for (;;) {
+			int currentItem;
 
 			hslot = ExecProcNode(planstate);
-			recstate->average = getTupleFloat(hslot,"average");
-			recathon_queryEnd(queryDesc,recathoncontext);
+			if (TupIsNull(hslot)) break;
 
-			/* Next, we need to store this user's similarity model
-			 * in a hash table for easier access. We base the table on
-			 * the number of items we have to rate - a close enough
-			 * approximation that we won't have much trouble. */
-			recstate->simTable = hashCreate(recstate->totalItems);
+			currentItem = getTupleInt(hslot,attributes->itemkey);
 
-			/* We need to find the entire similarity table for this
-			 * user, which will be in two parts. Here's the first. */
-			sprintf(querystring,"select * from %s where user1 < %d and user2 = %d;",
-				attributes->recModelName,attributes->userID,
-				attributes->userID);
-			queryDesc = recathon_queryStart(querystring,&recathoncontext);
-			planstate = queryDesc->planstate;
+			recstate->fullItemList[i] = currentItem;
+			i++;
+			if (i >= recstate->fullTotalItems) break;
+		}
+		recathon_queryEnd(queryDesc,recathoncontext);
 
-			for (;;) {
-				int currentUser;
-				float currentSim;
-				GenRating *newUser;
-
-				hslot = ExecProcNode(planstate);
-				if (TupIsNull(hslot)) break;
-
-				currentUser = getTupleInt(hslot,"user1");
-				currentSim = getTupleFloat(hslot,"similarity");
-
-				newUser = (GenRating*) palloc(sizeof(GenRating));
-				newUser->ID = currentUser;
-				newUser->totalSim = currentSim;
-				newUser->next = NULL;
-				hashAdd(recstate->simTable, newUser);
-			}
-			recathon_queryEnd(queryDesc,recathoncontext);
-
-			/* Here's the second. */
-			sprintf(querystring,"select * from %s where user1 = %d;",
-				attributes->recModelName,attributes->userID);
-			queryDesc = recathon_queryStart(querystring,&recathoncontext);
-			planstate = queryDesc->planstate;
-
-			for (;;) {
-				int currentUser;
-				float currentSim;
-				GenRating *newUser;
-
-				hslot = ExecProcNode(planstate);
-				if (TupIsNull(hslot)) break;
-
-				currentUser = getTupleInt(hslot,"user2");
-				currentSim = getTupleFloat(hslot,"similarity");
-
-				newUser = (GenRating*) palloc(sizeof(GenRating));
-				newUser->ID = currentUser;
-				newUser->totalSim = currentSim;
-				newUser->next = NULL;
-				hashAdd(recstate->simTable, newUser);
-			}
-			recathon_queryEnd(queryDesc,recathoncontext);
-
-			break;
-		/* If this is a SVD recommender, we can pre-obtain the user features,
-		 * which stay fixed, and cut the I/O time in half. */
-		case SVD:
-			recstate->userFeatures = (float*) palloc(50*sizeof(float));
-			for (i = 0; i < 50; i++)
-				recstate->userFeatures[i] = 0;
-			sprintf(querystring,"select * from %s where users = %d;",
-				attributes->recModelName,attributes->userID);
-			queryDesc = recathon_queryStart(querystring,&recathoncontext);
-			planstate = queryDesc->planstate;
-
-			for (;;) {
-				int feature;
-				float featValue;
-
-				hslot = ExecProcNode(planstate);
-				if (TupIsNull(hslot)) break;
-
-				feature = getTupleInt(hslot,"feature");
-				featValue = getTupleFloat(hslot,"value");
-
-				recstate->userFeatures[feature] = featValue;
-			}
-
-			recathon_queryEnd(queryDesc,recathoncontext);
-			break;
-		default:
-			elog(ERROR, "invalid recommendation method in ExecInitRecScan()");
+		/* Quick error protection. */
+		recstate->fullTotalItems = i;
+		if (recstate->fullTotalItems <= 0)
+			elog(ERROR, "no ratings in table %s, cannot predict ratings",
+				attributes->eventtable);
 	}
 
 	recstate->finished = false;
 	recstate->base_slot = NULL;
+	recstate->newUser = true;
+	recstate->useratt = -1;
+	recstate->itematt = -1;
+	recstate->eventatt = -1;
 
-	/* Lastly, we also need to increase the query counter for this particular table. */
-	sprintf(querystring,"update %sindex set querycounter = querycounter+1",attributes->recName);
-	if (attributes->numAtts > 0) strncat(querystring," where ",7);
-	// Add info to the WHERE clause, based on the attributes.
-	for (i = 0; i < attributes->numAtts; i++) {
-		char add_string[128];
-		sprintf(add_string,"%s='%s'",attributes->attNames[i],
-			attributes->attValues[i]);
-		strncat(querystring,add_string,strlen(add_string));
-		if (i+1 < attributes->numAtts)
-			strncat(querystring," and ",5);
+	/* Initialize certain structures to NULL. */
+	recstate->ratedTable = NULL;
+	recstate->pendingTable = NULL;
+	recstate->simTable = NULL;
+	recstate->itemList = NULL;
+	recstate->userFeatures = NULL;
+
+	/* In case we don't have a pre-built recommender, we need to assemble
+	 * the appropriate structures now. */
+	recstate->itemCFmodel = NULL;
+	recstate->userCFmodel = NULL;
+	recstate->SVDusermodel = NULL;
+	recstate->SVDitemmodel = NULL;
+
+	if (attributes->opType == OP_GENERATE) {
+		switch (attributes->method) {
+			case itemPearCF:
+				generateItemPearModel(recstate);
+				break;
+			case userCosCF:
+				generateUserCosModel(recstate);
+				break;
+			case userPearCF:
+				generateUserPearModel(recstate);
+				break;
+			case SVD:
+				generateSVDmodel(recstate);
+				break;
+			/* The default case is itemCosCF. There shouldn't actually
+			 * be a possibility of "default", but just in case. */
+			case itemCosCF:
+			default:
+				generateItemCosModel(recstate);
+				break;
+		}
 	}
-	strncat(querystring,";",1);
-	if (VERBOSE) printf("%s\n",querystring);
-	recathon_queryExecute(querystring);
+
+	/* Lastly, we also need to increase the query counter for this particular table,
+	 * if it exists already. If this was on-the-fly, forget it. */
+	if (attributes->recIndexName) {
+		sprintf(querystring,"update %s set querycounter = querycounter+1;",attributes->recIndexName);
+		recathon_queryExecute(querystring);
+	}
 	pfree(querystring);
 
 	/* In the current version of Recathon, we will not be using
@@ -1017,4 +961,6 @@ ExecEndRecScan(RecScanState *node)
 		pfree(node->itemList);
 	if (node->userFeatures)
 		pfree(node->userFeatures);
+	if (node->base_slot)
+		FreeTupleDesc(node->base_slot);
 }

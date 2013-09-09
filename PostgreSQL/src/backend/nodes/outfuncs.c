@@ -2070,10 +2070,10 @@ _outAttributeInfo(StringInfo str, const AttributeInfo *node)
 	WRITE_STRING_FIELD(recName);
 	WRITE_STRING_FIELD(usertable);
 	WRITE_STRING_FIELD(itemtable);
-	WRITE_STRING_FIELD(ratingtable);
+	WRITE_STRING_FIELD(eventtable);
 	WRITE_STRING_FIELD(userkey);
 	WRITE_STRING_FIELD(itemkey);
-	WRITE_STRING_FIELD(ratingval);
+	WRITE_STRING_FIELD(eventval);
 	WRITE_INT_FIELD(method);
 	WRITE_STRING_FIELD(recModelName);
 	WRITE_STRING_FIELD(recModelName2);

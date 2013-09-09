@@ -1490,6 +1490,7 @@ typedef struct ForeignScanState
 typedef struct GenRating
 {
 	int			ID;			/* the user or item ID */
+	int			index;			/* the user or item index */
 	float			score;			/* the tentative score */
 	float			totalSim;		/* the tentative similarity sum */
 	struct GenRating *	next;
@@ -1503,25 +1504,45 @@ typedef struct GenHash
 
 typedef struct RecScanState
 {
-	ScanState	ss;				/* its first field is NodeTag, needed for compatibility */
-	ScanState	*subscan;			/* need to hold additional structs */
-	Node		*attributes;			/* an AttributeInfo object */
-	bool		useRecView;			/* are we going to use the RecView? */
+	ScanState	ss;			/* its first field is NodeTag, needed for compatibility */
+	ScanState	*subscan;		/* need to hold additional structs */
+	Node		*attributes;		/* an AttributeInfo object */
+	bool		useRecView;		/* are we going to use the RecView? */
+	/* user list information */
+	int		totalUsers;		/* the number of users */
+	int 		userNum;		/* which user we're on */
+	int		*userList;		/* the list of users to use */
+	bool		validUser;		/* should we skip this user? */
+	/* full item list information */
+	bool		newUser;		/* are we considering a new user? */
+	int 		fullTotalItems;		/* the absolute number of items */
+	int		fullItemNum;		/* the current item in the full list */
+	int		*fullItemList;		/* the complete list of items */
+	/* on-the-fly recommendation data */
+	float		**itemCFmodel;		/* the item-based model */
+	float		**userCFmodel;		/* the user-based model */
+	float		**SVDusermodel;		/* the SVD-based user model */
+	float		**SVDitemmodel;		/* the SVD-based item model */
 	/* FILTERRECOMMEND information */
-	TupleDesc	base_slot;			/* a raw descriptor for us to use */
-	int		totalItems;			/* the number of items to calculate */
-	int		itemNum;			/* which item we're on */
-	int		*itemList;			/* the list of items to calculate */
-	bool		finished;			/* there are no more tuples to consider */
+	TupleDesc	base_slot;		/* a raw descriptor for us to use */
+	int		useratt;		/* the att number for the user key */
+	int		itematt;		/* the att number for the item key */
+	int		eventatt;		/* the att number for the event val */
+	int		totalItems;		/* the number of items to calculate */
+	int		itemNum;		/* which item we're on */
+	int		*itemList;		/* the list of items to calculate */
+	bool		finished;		/* there are no more tuples to consider */
 	/* itemCF recommendation */
-	int		totalRatings;			/* number of rated items */
-	GenHash		*ratedTable;			/* the table of ratings we'll use */
-	GenHash		*pendingTable;			/* the table of ratings we're calculating */
+	int		totalRatings;		/* number of rated items */
+	GenHash		*ratedTable;		/* the table of ratings we'll use */
+	GenHash		*pendingTable;		/* the table of ratings we're calculating */
 	/* userCF recommendation */
-	float		average;			/* average rating for this user */
-	GenHash		*simTable;			/* the similarities for this user */
+	float		average;		/* average rating for this user */
+	GenHash		*simTable;		/* the similarities for this user */
 	/* SVD information */
-	float		*userFeatures;			/* the user feature values */
+	int		userindex;		/* the current user index */
+	int		numFeatures;		/* the number of features */
+	float		*userFeatures;		/* the user feature values */
 } RecScanState;
 
 /* ----------------------------------------------------------------
