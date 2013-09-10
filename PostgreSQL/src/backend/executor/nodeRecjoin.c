@@ -129,6 +129,7 @@ ExecRecJoin(RecJoinState *recjoin)
 	{
 		int i, userID, innerItemID, natts;
 		GenRating *findRating;
+		TupleTableSlot *tempslot;
 
 		/*
 		 * If we don't have our tupleDesc, then we do exactly one fetch to
@@ -136,11 +137,28 @@ ExecRecJoin(RecJoinState *recjoin)
 		 * doing this, we've made sure that base_slot is populated.
 		 */
 		if (!recnode->base_slot) {
+			GenRating *tempItem;
+
 			outerTupleSlot = ExecProcNode(outerPlan);
 			/* If this happens, something has gone wrong. */
 			if (TupIsNull(outerTupleSlot)) {
 				ENL1_printf("no outer tuple, ending join");
 				return NULL;
+			}
+
+			/* Otherwise, we need to construct our first hash
+			 * table, since we need info from the previous operator
+			 * to do so. */
+			recjoin->itemTable = hashCreate(recjoin->recnode->totalItems);
+			for (i = 0; i < recjoin->recnode->totalItems; i++) {
+				int currentItem = recjoin->recnode->itemList[i];
+
+				tempItem = (GenRating*) palloc(sizeof(GenRating));
+				tempItem->ID = currentItem;
+				tempItem->index = -1;
+				tempItem->next = NULL;
+
+				hashAdd(recjoin->itemTable,tempItem);
 			}
 		}
 
@@ -148,27 +166,61 @@ ExecRecJoin(RecJoinState *recjoin)
 		outerTupleSlot = MakeSingleTupleTableSlot(recnode->base_slot);
 		outerTupleSlot->tts_isempty = false;
 
-		/* Mark all slots as non-empty. */
+		/* Mark all slots as non-empty and zero. */
 		natts = outerTupleSlot->tts_tupleDescriptor->natts;
 		for (i = 0; i < natts; i++) {
 			/* Mark slot. */
+			outerTupleSlot->tts_values[i] = Int32GetDatum(0);
 			outerTupleSlot->tts_isnull[i] = false;
 			outerTupleSlot->tts_nvalid++;
 		}
 
 		/*
-		 * we have an outerTuple, try to get the next inner tuple.
+		 * try to get the next inner tuple.
 		 */
 		ENL1_printf("getting new inner tuple");
 
 		innerTupleSlot = ExecProcNode(innerPlan);
 		econtext->ecxt_innertuple = innerTupleSlot;
 
-		/* If there's no inner tuple, then we're done. */
-		if (TupIsNull(innerTupleSlot))
+		/* If there's no inner tuple, then we should attempt to get a new
+		 * outer tuple, like a normal join. */
+		while (TupIsNull(innerTupleSlot))
 		{
-			ENL1_printf("no inner tuple, ending join");
-			return NULL;
+			GenRating *tempItem;
+
+			ENL1_printf("no inner tuple, getting new outer tuple");
+			/* It's not as simple as just getting a new outer tuple,
+			 * though. We need to rebuild our hash structure to reflect
+			 * the new user ID, as well. We don't actually use the
+			 * returned slot here, it's just used to make the previous
+			 * level generate certain information. */
+			tempslot = ExecProcNode(outerPlan);
+
+			/* If the returned slot is NULL, though, we're just done. */
+			if (TupIsNull(tempslot)) {
+				ENL1_printf("out of users, ending join");
+				return NULL;
+			}
+
+			freeHash(recjoin->itemTable);
+			recjoin->itemTable = hashCreate(recjoin->recnode->totalItems);
+			for (i = 0; i < recjoin->recnode->totalItems; i++) {
+				int currentItem = recjoin->recnode->itemList[i];
+
+				tempItem = (GenRating*) palloc(sizeof(GenRating));
+				tempItem->ID = currentItem;
+				tempItem->index = -1;
+				tempItem->next = NULL;
+
+				hashAdd(recjoin->itemTable,tempItem);
+			}
+
+			/* Now try again for that inner tuple. */
+			ENL1_printf("getting new inner tuple");
+
+			innerTupleSlot = ExecProcNode(innerPlan);
+			econtext->ecxt_innertuple = innerTupleSlot;
 		}
 
 		/*
@@ -288,19 +340,6 @@ ExecInitRecJoin(RecJoin *node, EState *estate, int eflags)
 
 	rjstate->recnode = (RecScanState*) rjstate->subjoin->js.ps.lefttree;
 	rjstate->innerscan = rjstate->subjoin->js.ps.righttree;
-
-	/* We need to create a hash table. */
-	rjstate->itemTable = hashCreate(rjstate->recnode->totalItems);
-	for (i = 0; i < rjstate->recnode->totalItems; i++) {
-		int currentItem = rjstate->recnode->itemList[i];
-
-		tempItem = (GenRating*) palloc(sizeof(GenRating));
-		tempItem->ID = currentItem;
-		tempItem->index = -1;
-		tempItem->next = NULL;
-
-		hashAdd(rjstate->itemTable,tempItem);
-	}
 
 	NL1_printf("ExecInitRecJoin: %s\n",
 			   "node initialized");

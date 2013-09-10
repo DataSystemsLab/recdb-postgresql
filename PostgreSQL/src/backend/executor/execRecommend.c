@@ -510,9 +510,12 @@ ExecFilterRecommend(RecScanState *recnode,
 		if (attributes->opType == OP_NOFILTER)
 			applyRecScore(recnode, slot, itemID, itemindex);
 
-		/* Move onto the next item, for next time. */
+		/* Move onto the next item, for next time. If we're doing a RecJoin,
+		 * though, we'll move onto the next user instead. */
 		recnode->itemNum++;
-		if (recnode->itemNum >= recnode->totalItems) {
+		if (recnode->itemNum >= recnode->totalItems ||
+			attributes->opType == OP_JOIN ||
+			attributes->opType == OP_GENERATEJOIN) {
 			/* If we've reached the last item, move onto the next user.
 			 * If we've reached the last user, we're done. */
 			recnode->userNum++;
@@ -750,7 +753,7 @@ ExecInitRecScan(RecScan *node, EState *estate, int eflags)
 	 * to do this, as this list may be created as a side effect. */
 
 	querystring = (char*) palloc(1024*sizeof(char));
-	if (attributes->opType != OP_GENERATE ||
+	if ((attributes->opType != OP_GENERATE && attributes->opType != OP_GENERATEJOIN) ||
 	    attributes->method == itemCosCF ||
 	    attributes->method == itemPearCF) {
 		sprintf(querystring,"select count(distinct %s) from %s;",
@@ -804,7 +807,7 @@ ExecInitRecScan(RecScan *node, EState *estate, int eflags)
 	/* Next, for annoying and convoluted reasons, we need a full list of all the
 	 * items in the rating table. This will help us circumvent some filter issues
 	 * while remaining as efficient as we can manage. */
-	if (attributes->opType != OP_GENERATE ||
+	if ((attributes->opType != OP_GENERATE && attributes->opType != OP_GENERATEJOIN) ||
 	    attributes->method == userCosCF ||
 	    attributes->method == userPearCF) {
 		sprintf(querystring,"select count(distinct %s) from %s;",
@@ -873,7 +876,7 @@ ExecInitRecScan(RecScan *node, EState *estate, int eflags)
 	recstate->SVDusermodel = NULL;
 	recstate->SVDitemmodel = NULL;
 
-	if (attributes->opType == OP_GENERATE) {
+	if (attributes->opType == OP_GENERATE || attributes->opType == OP_GENERATEJOIN) {
 		switch (attributes->method) {
 			case itemPearCF:
 				generateItemPearModel(recstate);

@@ -4011,7 +4011,7 @@ prepUserForRating(RecScanState *recstate, int userID) {
 			 * from the rated items to the unrated ones. It's good to get
 			 * this done early, as this will allow the operator to be
 			 * non-blocking, which is important. */
-			if (attributes->opType == OP_GENERATE)
+			if (attributes->opType == OP_GENERATE || attributes->opType == OP_GENERATEJOIN)
 				applyItemSimGenerate(recstate);
 			else
 				applyItemSim(recstate, attributes->recModelName);
@@ -4040,7 +4040,7 @@ prepUserForRating(RecScanState *recstate, int userID) {
 
 			/* We need to find the entire similarity table for this
 			 * user, which will be in two parts. */
-			if (attributes->opType == OP_GENERATE) {
+			if (attributes->opType == OP_GENERATE || attributes->opType == OP_GENERATEJOIN) {
 				for (i = 0; i < userindex; i++) {
 					int currentUser;
 					float currentSim;
@@ -4135,7 +4135,7 @@ prepUserForRating(RecScanState *recstate, int userID) {
 		 * which stay fixed, and cut the I/O time in half. Of course, if this
 		 * is generated on-the-fly, this is done already. */
 		case SVD:
-			if (attributes->opType != OP_GENERATE) {
+			if (attributes->opType != OP_GENERATE && attributes->opType != OP_GENERATEJOIN) {
 				recstate->userFeatures = (float*) palloc(50*sizeof(float));
 				for (i = 0; i < 50; i++)
 					recstate->userFeatures[i] = 0;
@@ -4498,20 +4498,20 @@ applyRecScore(RecScanState *recnode, TupleTableSlot *slot, int itemid, int itemi
 	switch ((recMethod)attributes->method) {
 		case itemCosCF:
 		case itemPearCF:
-			if (attributes->opType == OP_GENERATE)
+			if (attributes->opType == OP_GENERATE || attributes->opType == OP_GENERATEJOIN)
 				recscore = itemCFgenerate(recnode,itemid,itemindex);
 			else
 				recscore = itemCFpredict(recnode,attributes->recModelName,itemid);
 			break;
 		case userCosCF:
 		case userPearCF:
-			if (attributes->opType == OP_GENERATE)
+			if (attributes->opType == OP_GENERATE || attributes->opType == OP_GENERATEJOIN)
 				recscore = userCFgenerate(recnode,itemid,itemindex);
 			else
 				recscore = userCFpredict(recnode,attributes->eventval,itemid);
 			break;
 		case SVD:
-			if (attributes->opType == OP_GENERATE)
+			if (attributes->opType == OP_GENERATE || attributes->opType == OP_GENERATEJOIN)
 				recscore = SVDgenerate(recnode,itemid,itemindex);
 			else
 				recscore = SVDpredict(recnode,attributes->recModelName2,itemid);

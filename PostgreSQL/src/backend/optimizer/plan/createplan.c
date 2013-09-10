@@ -636,7 +636,7 @@ create_join_plan(PlannerInfo *root, JoinPath *best_path)
 	if (nodeTag(outer_plan) == T_RecScan) {
 		// We need to see if our opType is OP_JOIN.
 		RecommendInfo *recInfo = (RecommendInfo*) ((RecScan*)outer_plan)->recommender;
-		if (recInfo->opType == OP_JOIN)
+		if (recInfo->opType == OP_JOIN || recInfo->opType == OP_GENERATEJOIN)
 			create_recjoin = true;
 	}
 

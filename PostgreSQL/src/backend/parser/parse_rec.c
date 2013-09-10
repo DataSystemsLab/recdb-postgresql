@@ -35,6 +35,9 @@ static void modifyColumnRef(ColumnRef *attribute, char *recname, char *viewname)
 static void modifyFrom(SelectStmt *stmt, RecommendInfo *recInfo);
 static void filterfirst(Node *whereExpr, RecommendInfo *recInfo);
 static bool filterfirstrecurse(Node *whereExpr, RecommendInfo *recInfo);
+static void applyRecJoin(Node *whereClause, List *fromClause, RecommendInfo *recInfo);
+static RangeVar* locateJoinTable(Node* recExpr, List *fromClause, RangeVar* eventtable, char* key);
+static bool tableMatch(RangeVar* table, char* tablename);
 
 /*
  * transformRecommendClause -
@@ -69,15 +72,6 @@ transformRecommendClause(ParseState *pstate, List **targetlist, SelectStmt *stmt
 			(errcode(ERRCODE_SYNTAX_ERROR),
 			 errmsg("a valid events table has not been provided")));
 
-	// Step three: ensure that, somewhere in the target_list,
-	// we have a reference to the item ID from the event table.
-	// The star_found boolean will indicate if all key target
-	// elements are included by default (i.e. if there is a *).
-	// We need to find the item ID for at least one recommender.
-	// The other item IDs will be added into the WHERE clause
-	// and then added implicitly to the target list as junk.
-//	validateTargetList(stmt, recInfo);
-
 	// Step two: look through the WHERE clause to see if there are any RecScore
 	// restrictions. If there are, throw an error. In the current version of RecDB,
 	// that will cause problems.
@@ -87,7 +81,11 @@ transformRecommendClause(ParseState *pstate, List **targetlist, SelectStmt *stmt
 			(errcode(ERRCODE_SYNTAX_ERROR),
 			 errmsg("restrictions on RecScore are not supported at this time")));
 
-	// Step three: now that we've verified the correctness of our query, we need to
+	// Step three: see if we are joining the user ID or item ID to another table, in
+	// which case we want to perform a RecJoin.
+	applyRecJoin(stmt->whereClause, stmt->fromClause, recInfo);
+
+	// Step four: now that we've verified the correctness of our query, we need to
 	// see if a recommender already exists for a given table and method. If so, we'll
 	// reference the created RecModel; if not, we'll build it on the fly from the
 	// schema of the events table. Either way, we make a note of which of our tables
@@ -209,16 +207,11 @@ getEventsTable(List *fromClause, Node *recommendClause) {
 				RangeVar *fromVar;
 
 				fromVar = (RangeVar*) from_node;
-				if (fromVar->alias) {
-					if (strcmp(fromVar->alias->aliasname,usertref) == 0) {
-						eventtable = fromVar->relname;
-						break;
-					}
-				} else {
-					if (strcmp(fromVar->relname,usertref) == 0) {
-						eventtable = fromVar->relname;
-						break;
-					}
+				if (tableMatch(fromVar,usertref)) {
+					eventtable = fromVar->relname;
+					recInfo->recommender = fromVar;
+					fromVar->recommender = (Node*) recInfo;
+					break;
 				}
 			}
 		}
@@ -274,7 +267,7 @@ getEventsTable(List *fromClause, Node *recommendClause) {
 /*
  * getTableRef -
  *	  A function that takes in a ColumnRef and returns the
- *	  accompanying table reference, if any.
+ *	  column name, with the table reference as a side effect.
  */
 static char*
 getTableRef(ColumnRef *colref, char **colname) {
@@ -529,25 +522,28 @@ modifyFrom(SelectStmt *stmt, RecommendInfo *recInfo) {
 	MemoryContext recathoncontext;
 
 	method = (recMethod) recInfo->attributes->method;
-
 	// We'll take a look to see if a recommender was already built
 	// on this table and method.
 	recindexname = retrieveRecommender(recInfo->attributes->eventtable,recInfo->strmethod);
 
 	// If no recommender turned up, we'll just return right away.
-	// We'll utilize the events table for our event generation.
+	// We'll utilize the events table for our event generation. Though
+	// we should note if this is a join table.
 	if (!recindexname) {
-		// DEBUG - DON'T ALLOW THIS YET
-//		ereport(ERROR,
-//			(errcode(ERRCODE_SYNTAX_ERROR),
-//			 errmsg("no recommender built")));
+		if (recInfo->opType == OP_JOIN) {
+			recInfo->opType = OP_GENERATEJOIN;
+			recInfo->attributes->opType = OP_GENERATEJOIN;
+		}
 		return;
 	}
 
 	// We're using a different method from the default, which is
-	// OP_GENERATE.
-	recInfo->opType = OP_FILTER;
-	recInfo->attributes->opType = OP_FILTER;
+	// OP_GENERATE. If we changed it to OP_JOIN, though, we'll
+	// leave it.
+	if (recInfo->opType == OP_GENERATE) {
+		recInfo->opType = OP_FILTER;
+		recInfo->attributes->opType = OP_FILTER;
+	}
 
 	// If a recommender did turn up, then we need to track down the
 	// RecView and replace our event table with it. We'll also store
@@ -682,5 +678,178 @@ filterfirstrecurse(Node *whereExpr, RecommendInfo *recInfo) {
 	}
 
 	// All other types fail, for now.
+	return false;
+}
+
+/*
+ * applyRecJoin -
+ *	  A function to determine if we need to employ a RecJoin.
+ */
+static void
+applyRecJoin(Node *whereClause, List *fromClause, RecommendInfo *recInfo) {
+	RangeVar *partnerTable;
+	AttributeInfo *attributes = recInfo->attributes;
+	RecommendInfo* partnerInfo;
+
+	// It's only possible if we have multiple tables.
+	if (list_length(fromClause) < 2)
+		return;
+
+	// Start by seeing if there's a match with the item key.
+	partnerTable = locateJoinTable(whereClause, fromClause,
+				recInfo->recommender, attributes->itemkey);
+	// Then go to the user key.
+	if (!partnerTable)
+		partnerTable = locateJoinTable(whereClause, fromClause,
+					recInfo->recommender, attributes->userkey);
+//	else
+//		ereport(ERROR,
+//		(errcode(ERRCODE_SYNTAX_ERROR),
+//		 errmsg("found item ID match")));
+
+
+	// If we found no such table, give up.
+	if (!partnerTable)
+		return;
+//	else
+//		ereport(ERROR,
+//		(errcode(ERRCODE_SYNTAX_ERROR),
+//		 errmsg("found user ID match")));
+
+	// Otherwise, we found an appropriate table. Make a note.
+	recInfo->opType = OP_JOIN;
+	attributes->opType = OP_JOIN;
+	// Then we need to mark the appropriate table, appropriately.
+	partnerInfo = makeNode(RecommendInfo);
+	partnerInfo->opType = OP_JOINPARTNER;
+	partnerTable->recommender = partnerInfo;
+}
+
+
+/*
+ * locateJoinTable -
+ *	  A function to search through the WHERE clause and see if we are
+ *	  joining our recommender with some other table, either by item ID
+ *	  or user ID. We give preference to item ID.
+ */
+static RangeVar*
+locateJoinTable(Node* recExpr, List *fromClause, RangeVar* eventtable, char* key) {
+	A_Expr *recAExpr;
+
+	if (!recExpr)
+		return NULL;
+
+	/* Turns out this isn't necessarily an A_Expr. */
+	if (nodeTag(recExpr) != T_A_Expr)
+		return NULL;
+
+	recAExpr = (A_Expr*) recExpr;
+
+	// If our expression is an =, then do the actual check.
+	if (recAExpr->kind == AEXPR_OP) {
+		Value *opVal;
+		char *opType;
+
+		// It is possible to have this odd error under some circumstances.
+		if (recAExpr->name->length == 0)
+			return NULL;
+
+		opVal = (Value*) lfirst(recAExpr->name->head);
+		opType = opVal->val.str;
+
+		if (strcmp(opType,"=") == 0) {
+			// We need to check the left and right arguments.
+			char *leftcol, *lefttable;
+			char *rightcol, *righttable;
+
+			// Left should be a ColumnRef. If it is, extract the info.
+			// If we're dealing with the key in question, continue.
+			if (nodeTag(recAExpr->lexpr) == T_ColumnRef) {
+				ColumnRef *leftcr = (ColumnRef*) recAExpr->lexpr;
+
+				leftcol = getTableRef(leftcr,&lefttable);
+				if (strcmp(leftcol,key) != 0)
+					return NULL;
+			} else
+				return NULL;
+
+			// Right should be a ColumnRef too. If it is, extract the info.
+			// If we're dealing with the key in question, continue.
+			if (nodeTag(recAExpr->rexpr) == T_ColumnRef) {
+				ColumnRef *rightcr = (ColumnRef*) recAExpr->rexpr;
+
+				rightcol = getTableRef(rightcr,&righttable);
+				if (strcmp(rightcol,key) != 0)
+					return NULL;
+			} else
+				return NULL;
+
+			// If either table reference is null, just return NULL. That's
+			// not a valid WHERE clause anyway.
+			if (!lefttable || !righttable)
+				return NULL;
+
+			// So we're dealing with two tables equating the key column.
+			// If one of the tables matches our ratings table, we will
+			// return the other one.
+			if (tableMatch(eventtable,lefttable)) {
+				ListCell *from_cell;
+				foreach(from_cell,fromClause) {
+					Node *from_node = lfirst(from_cell);
+					if (nodeTag(from_node) == T_RangeVar) {
+						RangeVar *fromVar;
+
+						fromVar = (RangeVar*) from_node;
+						if (tableMatch(fromVar,righttable))
+							return fromVar;
+					}
+				}
+			}
+			else if (tableMatch(eventtable,righttable)) {
+				ListCell *from_cell;
+				foreach(from_cell,fromClause) {
+					Node *from_node = lfirst(from_cell);
+					if (nodeTag(from_node) == T_RangeVar) {
+						RangeVar *fromVar;
+
+						fromVar = (RangeVar*) from_node;
+						if (tableMatch(fromVar,lefttable))
+							return fromVar;
+					}
+				}
+			}
+		}
+	}
+	// If we didn't find what we're looking for, recurse.
+	else {
+		RangeVar *rtnvar;
+
+		rtnvar = locateJoinTable(recAExpr->lexpr,fromClause,eventtable,key);
+		if (rtnvar) return rtnvar;
+		rtnvar = locateJoinTable(recAExpr->rexpr,fromClause,eventtable,key);
+		if (rtnvar) return rtnvar;
+	}
+
+	// All other kinds fail, at least for now.
+	return NULL;
+}
+
+/*
+ * tableMatch -
+ *	  A function to determine if a given char* matches the name or
+ *	  alias of a recommender.
+ */
+static bool
+tableMatch(RangeVar* table, char* tablename) {
+	if (table->alias) {
+		if (strcmp(table->alias->aliasname,tablename) == 0) {
+			return true;
+		}
+	} else {
+		if (strcmp(table->relname,tablename) == 0) {
+			return true;
+		}
+	}
+
 	return false;
 }

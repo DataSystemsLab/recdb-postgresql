@@ -5,6 +5,9 @@ use warnings;
 my $argc = (scalar @ARGV);
 
 print "\nBeginning PostgreSQL installation.\n";
+
+system "chmod", "0700", "configure";
+
 print "Configuration in progress.\n";
 if ($argc > 0) {
 	system "./configure", "--prefix=$ARGV[0]", "--enable-debug";

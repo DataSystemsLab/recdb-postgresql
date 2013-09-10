@@ -66,7 +66,8 @@ typedef enum {
 	OP_JOIN,
 	OP_JOINPARTNER,
 	OP_INDEX,
-	OP_GENERATE
+	OP_GENERATE,
+	OP_GENERATEJOIN
 } recathon_optype;
 
 /*
