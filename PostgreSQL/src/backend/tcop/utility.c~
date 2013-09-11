@@ -83,34 +83,18 @@
 /* Hook for plugins to get control in ProcessUtility() */
 ProcessUtility_hook_type ProcessUtility_hook = NULL;
 
-/* Several functions created for the CreateRStmt. */
-static void freeCellList(cell_node head);
-
 /* The functions for creating recommendation models. */
-static void itemSimilarity(CreateRStmt *recStmt, attr_node attList, int numatts, recMethod method);
-static void userSimilarity(CreateRStmt *recStmt, attr_node attList, int numatts, recMethod method);
-static void SVDSimilarity(CreateRStmt *recStmt, attr_node attList, int numatts);
-
-/* Function to free a list of cell_nodes. */
-static void freeCellList(cell_node head) {
-	cell_node temp;
-	while (head) {
-		temp = head->next;
-		if (head->modelname1)
-			pfree(head->modelname1);
-		if (head->modelname2)
-			pfree(head->modelname2);
-		if (head->viewname)
-			pfree(head->viewname);
-		pfree(head);
-		head = temp;
-	}
-}
+static void itemSimilarity(CreateRStmt *recStmt, recMethod method);
+static void userSimilarity(CreateRStmt *recStmt, recMethod method);
+static void SVDSimilarity(CreateRStmt *recStmt);
 
 /*
  * Create item similarity matrices for each cell in a recommender.
  */
-static void itemSimilarity(CreateRStmt *recStmt, attr_node attList, int numatts, recMethod method) {
+static void itemSimilarity(CreateRStmt *recStmt, recMethod method) {
+	int numEvents = 0;
+	char *recindexname, *recmodelname, *recviewname;
+	struct timeval timestamp;
 	// For cosine similarity, we will constantly re-use the vector
 	// length of each item, and that's a pain to calculate. We're
 	// going to pre-calculate that information, store it in an
@@ -119,227 +103,86 @@ static void itemSimilarity(CreateRStmt *recStmt, attr_node attList, int numatts,
 	float *itemLengths;
 	// For Pearson correlation.
 	float *itemAvgs, *itemPearsons;
-	int i, numItems;
+	int numItems;
 	// Objects for querying.
 	char *querystring;
-	QueryDesc *queryDesc;
-	PlanState *planstate;
-	TupleTableSlot *slot;
-	MemoryContext recathoncontext;
 
 	// For cosine, we obtain the list of items, the number of items, and their vector lengths.
 	if (method == itemCosCF)
-		itemLengths = vector_lengths(recStmt->itemtable->relname,recStmt->itemkey,
-				recStmt->ratingtable->relname,recStmt->ratingval,&numItems,&itemIDs);
+		itemLengths = vector_lengths(recStmt->itemkey,recStmt->eventtable->relname,
+						recStmt->eventval,&numItems,&itemIDs);
 
-	// For Pearson, we obtain the list of items, the number of items, their average ratings,
+	// For Pearson, we obtain the list of items, the number of items, their average events,
 	// and another useful constant (I'm calling them Pearsons).
 	else if (method == itemPearCF)
-		pearson_info(recStmt->itemtable->relname,recStmt->itemkey,recStmt->ratingtable->relname,
-			recStmt->ratingval,&numItems,&itemIDs,&itemAvgs,&itemPearsons);
+		pearson_info(recStmt->itemkey,recStmt->eventtable->relname,
+			recStmt->eventval,&numItems,&itemIDs,&itemAvgs,&itemPearsons);
 
-	// Populate the recindex table, with all the necessary entries.
-	// If the recommender is context-based, then we need to obtain
-	// all of the possible value combinations, to make an entry
-	// for each one. If it's context-free, we just need the one,
-	// and no context information necessary.
-	if (numatts > 0) {
-		attr_node temp_node;
-		char *attquerystring;
-		char **attnames, **attvalues;
+	// Let's quickly fill in the name of the recIndex,
+	// since it'll be an argument for a later function.
+	recindexname = (char*) palloc((6+strlen(recStmt->eventtable->relname)+strlen(recStmt->method))*sizeof(char));
+	sprintf(recindexname,"%sIndex",recStmt->recname->relname);
 
-		// We'll temporarily store attribute names in this
-		// structure. It's handy to have an array, especially
-		// something that corresponds one-to-one with the values
-		// structure.
-		attnames = (char**) palloc(numatts*sizeof(char*));
-		temp_node = attList;
-		for (i = 0; i < numatts; i++) {
-			attnames[i] = (char*) palloc(256*sizeof(char));
-			sprintf(attnames[i],"%s",temp_node->colname);
-			temp_node = temp_node->next;
-		}
+	// Inserting the one entry for the recindex.
+	querystring = (char*) palloc(1024*sizeof(char));
+	gettimeofday(&timestamp,NULL);
 
-		// We'll store the attribute values in this.
-		attvalues = (char**) palloc(numatts*sizeof(char*));
+	// Let's name the model.
+	recmodelname = (char*) palloc(256*sizeof(char));
+	sprintf(recmodelname,"%sModel%ld%ld",recStmt->recname->relname,
+		timestamp.tv_sec,timestamp.tv_usec);
 
-		// We need to select each value combination.
-		attquerystring = (char*) palloc(1024*sizeof(char));
-		sprintf(attquerystring,"SELECT DISTINCT ");
-		for (temp_node = attList; temp_node; temp_node = temp_node->next) {
-			strncat(attquerystring,temp_node->colname,strlen(temp_node->colname));
-			if (temp_node->next)
-				strncat(attquerystring,", ",2);
-		}
-		strncat(attquerystring," FROM ",6);
-		strncat(attquerystring,recStmt->usertable->relname,strlen(recStmt->usertable->relname));
-		strncat(attquerystring,";",2);
+	// Let's also name the view.
+	recviewname = (char*) palloc(256*sizeof(char));
+	sprintf(recviewname,"%sView%ld%ld",recStmt->recname->relname,
+		timestamp.tv_sec,timestamp.tv_usec);
 
-		// Now that we have a query formulated, we look through the
-		// results and insert one entry into the recindex for each
-		// result.
-		queryDesc = recathon_queryStart(attquerystring, &recathoncontext);
-		planstate = queryDesc->planstate;
+	// We need to create a RecModel and calculate item similarities.
+	sprintf(querystring,"CREATE TABLE %s (item1 INTEGER NOT NULL, item2 INTEGER NOT NULL, similarity REAL NOT NULL);",
+		recmodelname);
+	// Execute the INSERT.
+	recathon_utilityExecute(querystring);
 
-		// Look through the results of our SELECT DISTINCT query.
-		for (;;) {
-			int j;
-			int numRatings = 0;
-			char *recindexname, *recmodelname;
-			struct timeval timestamp;
+	// Create a blank RecView for use with FILTERRECOMMEND
+	// and JOINRECOMMEND, and populate with a blank tuple.
+	sprintf(querystring,"CREATE TABLE %s (%s INTEGER NOT NULL, %s INTEGER NOT NULL, PRIMARY KEY (%s, %s), %s REAL NOT NULL);",
+		recviewname,
+		recStmt->userkey,recStmt->itemkey,
+		recStmt->userkey,recStmt->itemkey,
+		recStmt->eventval);
+	recathon_utilityExecute(querystring);
 
-			// Let's quickly fill in the name of the recIndex,
-			// since it'll be an argument for a later function.
-			recindexname = (char*) palloc((6+strlen(recStmt->relation->relname))*sizeof(char));
-			sprintf(recindexname,"%sIndex",recStmt->relation->relname);
+	// Insert a dummy tuple into the RecView.
+	sprintf(querystring,"INSERT INTO %s VALUES(-1,-1,-1);",recviewname);
+	recathon_queryExecute(querystring);
 
-			slot = ExecProcNode(planstate);
-			if (TupIsNull(slot)) break;
+	// The task of populating the similarity matrix is left to an
+	// external function.
+	if (method == itemCosCF)
+		numEvents = updateItemCosModel(recStmt->eventtable->relname,recStmt->userkey,recStmt->itemkey,
+					recStmt->eventval,recmodelname,itemIDs,itemLengths,
+					numItems,false);
+	else if (method == itemPearCF)
+		numEvents = updateItemPearModel(recStmt->eventtable->relname,recStmt->userkey,recStmt->itemkey,
+					recStmt->eventval,recmodelname,itemIDs,itemAvgs,
+					itemPearsons,numItems,false);
 
-			// Get each of the needed attribute values from our tuple.
-			for (j = 0; j < numatts; j++)
-				attvalues[j] = getTupleString(slot,attnames[j]);
+	// Now we can insert an entry into the index table for this cell.
+	sprintf(querystring,"INSERT INTO %s VALUES (default, '%s', '%s', 0, %d, 0, 0.0, 0.0, localtimestamp);",
+		recindexname,recmodelname,recviewname,numEvents);
 
-			// There's no way a "SELECT DISTINCT" clause is going
-			// to turn up NULL values, so our attvalues array should
-			// be full now.
-			querystring = (char*) palloc(1024*sizeof(char));
-			gettimeofday(&timestamp,NULL);
-
-			// Let's name the model.
-			recmodelname = (char*) palloc(256*sizeof(char));
-			sprintf(recmodelname,"%sModel%ld%ld",recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec);
-
-			// We need to create a RecModel and calculate item similarities.
-			sprintf(querystring,"CREATE TABLE %s (item1 INTEGER NOT NULL, item2 INTEGER NOT NULL, similarity REAL NOT NULL);",
-				recmodelname);
-			// Execute the INSERT.
-			recathon_utilityExecute(querystring);
-
-			// Create a blank RecView for use with FILTERRECOMMEND
-			// and JOINRECOMMEND, and populate with a blank tuple.
-			sprintf(querystring,"CREATE TABLE %sView%ld%ld (%s INTEGER NOT NULL, %s INTEGER NOT NULL, PRIMARY KEY (%s, %s), recscore REAL NOT NULL);",
-				recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec,
-				recStmt->userkey,recStmt->itemkey,
-				recStmt->userkey,recStmt->itemkey);
-			recathon_utilityExecute(querystring);
-
-			// Insert a dummy tuple into the RecView.
-			sprintf(querystring,"INSERT INTO %sView%ld%ld VALUES(-1,-1,-1);",
-				recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec);
-			recathon_queryExecute(querystring);
-
-			// The task of populating the similarity matrix is left to an
-			// external function.
-			if (method == itemCosCF)
-				numRatings = updateItemCosModel(recStmt->usertable->relname,recStmt->itemtable->relname,
-							recStmt->ratingtable->relname,recStmt->userkey,recStmt->itemkey,
-							recStmt->ratingval,recmodelname,numatts,attnames,attvalues,
-							itemIDs,itemLengths,numItems,false);
-			else if (method == itemPearCF)
-				numRatings = updateItemPearModel(recStmt->usertable->relname,recStmt->itemtable->relname,
-							recStmt->ratingtable->relname,recStmt->userkey,recStmt->itemkey,
-							recStmt->ratingval,recmodelname,numatts,attnames,attvalues,
-							itemIDs,itemAvgs,itemPearsons,numItems,false);
-
-			// Now we can insert an entry into the index table for this cell.
-			sprintf(querystring,"INSERT INTO %s VALUES (default, '%s', '%sView%ld%ld', 0, %d, 0, 0.0, 0.0, localtimestamp",
-				recindexname,recmodelname,recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec,numRatings);
-			// We need to add the attribute values.
-			for (i = 0; i < numatts; i++) {
-				char addition[256];
-				sprintf(addition,", '%s'",attvalues[i]);
-				strncat(querystring,addition,strlen(addition));
-			}
-			strncat(querystring,");",2);
-
-			// Now execute the INSERT query.
-			recathon_queryExecute(querystring);
-			pfree(querystring);
-		}
-
-		// Some memory cleanup.
-		recathon_queryEnd(queryDesc, recathoncontext);
-		for (i = 0; i < numatts; i++) {
-			pfree(attnames[i]);
-			pfree(attvalues[i]);
-		}
-		pfree(attnames);
-		pfree(attvalues);
-
-	// In case our recommender is context-free, our work is much easier.
-	} else {
-		int numRatings = 0;
-		char *recindexname, *recmodelname;
-		struct timeval timestamp;
-
-		// Let's quickly fill in the name of the recIndex,
-		// since it'll be an argument for a later function.
-		recindexname = (char*) palloc((6+strlen(recStmt->relation->relname))*sizeof(char));
-		sprintf(recindexname,"%sIndex",recStmt->relation->relname);
-
-		// Inserting the one entry for the recindex.
-		querystring = (char*) palloc(1024*sizeof(char));
-		gettimeofday(&timestamp,NULL);
-
-		// Let's name the model.
-		recmodelname = (char*) palloc(256*sizeof(char));
-		sprintf(recmodelname,"%sModel%ld%ld",recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec);
-
-		// We need to create a RecModel and calculate item similarities.
-		sprintf(querystring,"CREATE TABLE %s (item1 INTEGER NOT NULL, item2 INTEGER NOT NULL, similarity REAL NOT NULL);",
-			recmodelname);
-		// Execute the INSERT.
-		recathon_utilityExecute(querystring);
-
-		// Create a blank RecView for use with FILTERRECOMMEND
-		// and JOINRECOMMEND, and populate with a blank tuple.
-		sprintf(querystring,"CREATE TABLE %sView%ld%ld (%s INTEGER NOT NULL, %s INTEGER NOT NULL, PRIMARY KEY (%s, %s), recscore REAL NOT NULL);",
-			recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec,
-			recStmt->userkey,recStmt->itemkey,
-			recStmt->userkey,recStmt->itemkey);
-		recathon_utilityExecute(querystring);
-
-		// Insert a dummy tuple into the RecView.
-		sprintf(querystring,"INSERT INTO %sView%ld%ld VALUES(-1,-1,-1);",
-			recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec);
-		recathon_queryExecute(querystring);
-
-		// The task of populating the similarity matrix is left to an
-		// external function.
-		if (method == itemCosCF)
-			numRatings = updateItemCosModel(recStmt->usertable->relname,recStmt->itemtable->relname,
-						recStmt->ratingtable->relname,recStmt->userkey,recStmt->itemkey,
-						recStmt->ratingval,recmodelname,numatts,NULL,NULL,
-						itemIDs,itemLengths,numItems,false);
-		else if (method == itemPearCF)
-			numRatings = updateItemPearModel(recStmt->usertable->relname,recStmt->itemtable->relname,
-						recStmt->ratingtable->relname,recStmt->userkey,recStmt->itemkey,
-						recStmt->ratingval,recmodelname,numatts,NULL,NULL,
-						itemIDs,itemAvgs,itemPearsons,numItems,false);
-
-		// Now we can insert an entry into the index table for this cell.
-		sprintf(querystring,"INSERT INTO %s VALUES (default, '%s', '%sView%ld%ld', 0, %d, 0, 0.0, 0.0, localtimestamp);",
-			recindexname,recmodelname,recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec,numRatings);
-
-		// Now execute the INSERT query.
-		recathon_queryExecute(querystring);
-		pfree(querystring);
-	}
+	// Now execute the INSERT query.
+	recathon_queryExecute(querystring);
+	pfree(querystring);
 }
 
 /*
  * Create user similarity matrices for each cell in a recommender.
  */
-static void userSimilarity(CreateRStmt *recStmt, attr_node attList, int numatts, recMethod method) {
+static void userSimilarity(CreateRStmt *recStmt, recMethod method) {
+	int numEvents = 0;
+	char *recindexname, *recmodelname, *recviewname;
+	struct timeval timestamp;
 	// For cosine similarity, we will constantly re-use the vector
 	// length of each user, and that's a pain to calculate. We're
 	// going to pre-calculate that information, store it in an
@@ -348,447 +191,152 @@ static void userSimilarity(CreateRStmt *recStmt, attr_node attList, int numatts,
 	float *userLengths;
 	// For Pearson correlation.
 	float *userAvgs, *userPearsons;
-	int i, numUsers;
+	int numUsers;
 	// Objects for querying.
 	char *querystring;
-	QueryDesc *queryDesc;
-	PlanState *planstate;
-	TupleTableSlot *slot;
-	MemoryContext recathoncontext;
 
 	// For cosine, we obtain the list of users, the number of users, and their vector lengths.
 	if (method == userCosCF)
-		userLengths = vector_lengths(recStmt->usertable->relname,recStmt->userkey,
-				recStmt->ratingtable->relname,recStmt->ratingval,&numUsers,&userIDs);
+		userLengths = vector_lengths(recStmt->userkey,
+				recStmt->eventtable->relname,recStmt->eventval,&numUsers,&userIDs);
 
 	// For Pearson, we obtain the list of users, the number of users, their average ratings,
 	// and another useful constant (I'm calling them Pearsons).
 	else if (method == userPearCF)
-		pearson_info(recStmt->usertable->relname,recStmt->userkey,recStmt->ratingtable->relname,
-			recStmt->ratingval,&numUsers,&userIDs,&userAvgs,&userPearsons);
+		pearson_info(recStmt->userkey,recStmt->eventtable->relname,
+			recStmt->eventval,&numUsers,&userIDs,&userAvgs,&userPearsons);
 
-	// Populate the recindex table, with all the necessary entries.
-	// If the recommender is context-based, then we need to obtain
-	// all of the possible value combinations, to make an entry
-	// for each one. If it's context-free, we just need the one,
-	// and no context information necessary.
-	if (numatts > 0) {
-		attr_node temp_node;
-		char *attquerystring;
-		char **attnames, **attvalues;
+	// Let's quickly fill in the name of the recIndex,
+	// since it'll be an argument for a later function.
+	recindexname = (char*) palloc((6+strlen(recStmt->eventtable->relname)+strlen(recStmt->method))*sizeof(char));
+	sprintf(recindexname,"%sIndex",recStmt->recname->relname);
 
-		// We'll temporarily store attribute names in this
-		// structure. It's handy to have an array, especially
-		// something that corresponds one-to-one with the values
-		// structure.
-		attnames = (char**) palloc(numatts*sizeof(char*));
-		temp_node = attList;
-		for (i = 0; i < numatts; i++) {
-			attnames[i] = (char*) palloc(256*sizeof(char));
-			sprintf(attnames[i],"%s",temp_node->colname);
-			temp_node = temp_node->next;
-		}
+	// Inserting the one entry for the recindex.
+	querystring = (char*) palloc(1024*sizeof(char));
+	gettimeofday(&timestamp,NULL);
 
-		// We'll store the attribute values in this.
-		attvalues = (char**) palloc(numatts*sizeof(char*));
+	// Let's name the model.
+	recmodelname = (char*) palloc(256*sizeof(char));
+	sprintf(recmodelname,"%sModel%ld%ld",recStmt->recname->relname,
+		timestamp.tv_sec,timestamp.tv_usec);
 
-		// We need to select each value combination.
-		attquerystring = (char*) palloc(1024*sizeof(char));
-		sprintf(attquerystring,"SELECT DISTINCT ");
-		for (temp_node = attList; temp_node; temp_node = temp_node->next) {
-			strncat(attquerystring,temp_node->colname,strlen(temp_node->colname));
-			if (temp_node->next)
-				strncat(attquerystring,", ",2);
-		}
-		strncat(attquerystring," FROM ",6);
-		strncat(attquerystring,recStmt->usertable->relname,strlen(recStmt->usertable->relname));
-		strncat(attquerystring,";",2);
+	// Let's also name the view.
+	recviewname = (char*) palloc(256*sizeof(char));
+	sprintf(recviewname,"%sView%ld%ld",recStmt->recname->relname,
+		timestamp.tv_sec,timestamp.tv_usec);
 
-		// Now that we have a query formulated, we look through the
-		// results and insert one entry into the recindex for each
-		// result.
-		queryDesc = recathon_queryStart(attquerystring, &recathoncontext);
-		planstate = queryDesc->planstate;
+	// We need to create a recmodel and calculate item similarities.
+	sprintf(querystring,"CREATE TABLE %s (user1 INTEGER NOT NULL, user2 INTEGER NOT NULL, similarity REAL NOT NULL);",
+		recmodelname);
+	// Execute the INSERT.
+	recathon_utilityExecute(querystring);
 
-		// Look through the results of our SELECT DISTINCT query.
-		for (;;) {
-			int j;
-			int numRatings = 0;
-			char *recindexname, *recmodelname;
-			struct timeval timestamp;
+	// Create a blank RecView for use with FILTERRECOMMEND
+	// and JOINRECOMMEND, and populate with a blank tuple.
+	sprintf(querystring,"CREATE TABLE %s (%s INTEGER NOT NULL, %s INTEGER NOT NULL, PRIMARY KEY (%s, %s), %s REAL NOT NULL);",
+		recviewname,
+		recStmt->userkey,recStmt->itemkey,
+		recStmt->userkey,recStmt->itemkey,
+		recStmt->eventval);
+	recathon_utilityExecute(querystring);
 
-			// Let's quickly fill in the name of the recIndex,
-			// since it'll be an argument for a later function.
-			recindexname = (char*) palloc((6+strlen(recStmt->relation->relname))*sizeof(char));
-			sprintf(recindexname,"%sIndex",recStmt->relation->relname);
-printf("1: %s\n",recindexname);
-			slot = ExecProcNode(planstate);
-			if (TupIsNull(slot)) break;
-printf("2: %s\n",recindexname);
-			// Scan through the tuple and get all of the attvalues
-			// that correspond to our attnames.
-			for (j = 0; j < numatts; j++)
-				attvalues[j] = getTupleString(slot,attnames[j]);
-printf("3: %s\n",recindexname);
-			// There's no way a "SELECT DISTINCT" clause is going
-			// to turn up NULL values, so our attvalues array should
-			// be full now.
-			querystring = (char*) palloc(1024*sizeof(char));
-			gettimeofday(&timestamp,NULL);
-printf("4: %s\n",recindexname);
-			// Let's name the model.
-			recmodelname = (char*) palloc(256*sizeof(char));
-			sprintf(recmodelname,"%sModel%ld%ld",recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec);
-printf("5: %s\n",recindexname);
-			// We need to create a RecModel and calculate user similarities.
-			querystring = (char*) palloc(1024*sizeof(char));
-			sprintf(querystring,"CREATE TABLE %s (user1 INTEGER NOT NULL, user2 INTEGER NOT NULL, similarity REAL NOT NULL);",
-				recmodelname);
-			// Execute the INSERT.
-			recathon_utilityExecute(querystring);
-printf("6: %s\n",recindexname);
-			// Create a blank RecView for use with FILTERRECOMMEND
-			// and JOINRECOMMEND, and populate with a blank tuple.
-			sprintf(querystring,"CREATE TABLE %sView%ld%ld (%s INTEGER NOT NULL, %s INTEGER NOT NULL, PRIMARY KEY (%s, %s), recscore REAL NOT NULL);",
-				recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec,
-				recStmt->userkey,recStmt->itemkey,
-				recStmt->userkey,recStmt->itemkey);
-			recathon_utilityExecute(querystring);
-printf("7: %s\n",recindexname);
-			// Insert a dummy tuple into the RecView.
-			sprintf(querystring,"INSERT INTO %sView%ld%ld VALUES(-1,-1,-1);",
-				recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec);
-			recathon_queryExecute(querystring);
-printf("8: %s\n",recindexname);
-			// The task of populating the similarity matrix is left to an
-			// external function.
-			if (method == userCosCF)
-				numRatings = updateUserCosModel(recStmt->usertable->relname,recStmt->itemtable->relname,
-							recStmt->ratingtable->relname,recStmt->userkey,recStmt->itemkey,
-							recStmt->ratingval,recmodelname,numatts,attnames,attvalues,
-							userIDs,userLengths,numUsers,false);
-			else if (method == userPearCF)
-				numRatings = updateUserPearModel(recStmt->usertable->relname,recStmt->itemtable->relname,
-							recStmt->ratingtable->relname,recStmt->userkey,recStmt->itemkey,
-							recStmt->ratingval,recmodelname,numatts,attnames,attvalues,
-							userIDs,userAvgs,userPearsons,numUsers,false);
-printf("9: %s\n",recindexname);
-			// Now we can insert an entry into the index table for this cell.
-			sprintf(querystring,"INSERT INTO %s VALUES (default, '%s', '%sView%ld%ld', 0, %d, 0, 0.0, 0.0, localtimestamp",
-				recindexname,recmodelname,recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec,numRatings);
-			// We need to add the attribute values.
-			for (i = 0; i < numatts; i++) {
-				char addition[256];
-				sprintf(addition,", '%s'",attvalues[i]);
-				strncat(querystring,addition,strlen(addition));
-			}
-			strncat(querystring,");",2);
-printf("%s\n",querystring);
-			// Now execute the INSERT query.
-			recathon_queryExecute(querystring);
-			pfree(querystring);
-		}
+	// Insert a dummy tuple into the RecView.
+	sprintf(querystring,"INSERT INTO %s VALUES(-1,-1,-1);",recviewname);
+	recathon_queryExecute(querystring);
 
-		// Some memory cleanup.
-		recathon_queryEnd(queryDesc, recathoncontext);
-		for (i = 0; i < numatts; i++) {
-			pfree(attnames[i]);
-			pfree(attvalues[i]);
-		}
-		pfree(attnames);
-		pfree(attvalues);
+	// The task of populating the similarity matrix is left to an
+	// external function.
+	if (method == userCosCF)
+		numEvents = updateUserCosModel(recStmt->eventtable->relname,recStmt->userkey,recStmt->itemkey,
+					recStmt->eventval,recmodelname,userIDs,userLengths,
+					numUsers,false);
+	else if (method == userPearCF)
+		numEvents = updateUserPearModel(recStmt->eventtable->relname,recStmt->userkey,recStmt->itemkey,
+					recStmt->eventval,recmodelname,userIDs,userAvgs,
+					userPearsons,numUsers,false);
 
-	// In case our recommender is context-free, our work is much easier.
-	} else {
-		int numRatings = 0;
-		char *recindexname, *recmodelname;
-		struct timeval timestamp;
+	// Now we can insert an entry into the index table for this cell.
+	sprintf(querystring,"INSERT INTO %s VALUES (default, '%s', '%s', 0, %d, 0, 0.0, 0.0, localtimestamp);",
+		recindexname,recmodelname,recviewname,numEvents);
 
-		// Let's quickly fill in the name of the recIndex,
-		// since it'll be an argument for a later function.
-		recindexname = (char*) palloc((6+strlen(recStmt->relation->relname))*sizeof(char));
-		sprintf(recindexname,"%sIndex",recStmt->relation->relname);
-
-		// Inserting the one entry for the recindex.
-		querystring = (char*) palloc(1024*sizeof(char));
-		gettimeofday(&timestamp,NULL);
-
-		// Let's name the model.
-		recmodelname = (char*) palloc(256*sizeof(char));
-		sprintf(recmodelname,"%sModel%ld%ld",recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec);
-
-		// We need to create a recmodel and calculate item similarities.
-		querystring = (char*) palloc(1024*sizeof(char));
-		sprintf(querystring,"CREATE TABLE %s (user1 INTEGER NOT NULL, user2 INTEGER NOT NULL, similarity REAL NOT NULL);",
-			recmodelname);
-		// Execute the INSERT.
-		recathon_utilityExecute(querystring);
-
-		// Create a blank RecView for use with FILTERRECOMMEND
-		// and JOINRECOMMEND, and populate with a blank tuple.
-		sprintf(querystring,"CREATE TABLE %sView%ld%ld (%s INTEGER NOT NULL, %s INTEGER NOT NULL, PRIMARY KEY (%s, %s), recscore REAL NOT NULL);",
-			recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec,
-			recStmt->userkey,recStmt->itemkey,
-			recStmt->userkey,recStmt->itemkey);
-		recathon_utilityExecute(querystring);
-
-		// Insert a dummy tuple into the RecView.
-		sprintf(querystring,"INSERT INTO %sView%ld%ld VALUES(-1,-1,-1);",
-			recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec);
-		recathon_queryExecute(querystring);
-
-		// The task of populating the similarity matrix is left to an
-		// external function.
-		if (method == userCosCF)
-			numRatings = updateUserCosModel(recStmt->usertable->relname,recStmt->itemtable->relname,
-						recStmt->ratingtable->relname,recStmt->userkey,recStmt->itemkey,
-						recStmt->ratingval,recmodelname,numatts,NULL,NULL,
-						userIDs,userLengths,numUsers,false);
-		else if (method == userPearCF)
-			numRatings = updateUserPearModel(recStmt->usertable->relname,recStmt->itemtable->relname,
-						recStmt->ratingtable->relname,recStmt->userkey,recStmt->itemkey,
-						recStmt->ratingval,recmodelname,numatts,NULL,NULL,
-						userIDs,userAvgs,userPearsons,numUsers,false);
-
-		// Now we can insert an entry into the index table for this cell.
-		sprintf(querystring,"INSERT INTO %s VALUES (default, '%s', '%sView%ld%ld', 0, %d, 0, 0.0, 0.0, localtimestamp);",
-			recindexname,recmodelname,recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec,numRatings);
-
-		// Now execute the INSERT query.
-		recathon_queryExecute(querystring);
-		pfree(querystring);
-	}
+	// Now execute the INSERT query.
+	recathon_queryExecute(querystring);
+	pfree(querystring);
 }
 
 /*
  * Create item similarity matrices for each cell in a recommender.
  */
-static void SVDSimilarity(CreateRStmt *recStmt, attr_node attList, int numatts) {
-	// For cosine similarity, we will constantly re-use the vector
-	// length of each item, and that's a pain to calculate. We're
-	// going to pre-calculate that information, store it in an
-	// array, and refer to it when necessary.
-	int i;
+static void SVDSimilarity(CreateRStmt *recStmt) {
+	int numEvents = 0;
+	char *recindexname, *recusermodelname, *recitemmodelname, *recviewname;
+	struct timeval timestamp;
 	// Objects for querying.
 	char *querystring;
-	QueryDesc *queryDesc;
-	PlanState *planstate;
-	TupleTableSlot *slot;
-	MemoryContext recathoncontext;
 
-	// Populate the recindex table, with all the necessary entries.
-	// If the recommender is context-based, then we need to obtain
-	// all of the possible value combinations, to make an entry
-	// for each one. If it's context-free, we just need the one,
-	// and no context information necessary.
-	if (numatts > 0) {
-		attr_node temp_node;
-		char *attquerystring;
-		char **attnames, **attvalues;
+	// Let's quickly fill in the name of the recIndex,
+	// since it'll be an argument for a later function.
+	recindexname = (char*) palloc((6+strlen(recStmt->eventtable->relname)+strlen(recStmt->method))*sizeof(char));
+	sprintf(recindexname,"%sIndex",recStmt->recname->relname);
 
-		// We'll temporarily store attribute names in this
-		// structure. It's handy to have an array, especially
-		// something that corresponds one-to-one with the values
-		// structure.
-		attnames = (char**) palloc(numatts*sizeof(char*));
-		temp_node = attList;
-		for (i = 0; i < numatts; i++) {
-			attnames[i] = (char*) palloc(256*sizeof(char));
-			sprintf(attnames[i],"%s",temp_node->colname);
-			temp_node = temp_node->next;
-		}
+	// Inserting the one entry for the recindex.
+	querystring = (char*) palloc(1024*sizeof(char));
+	gettimeofday(&timestamp,NULL);
 
-		// We'll store the attribute values in this.
-		attvalues = (char**) palloc(numatts*sizeof(char*));
+	// Let's name the user model.
+	recusermodelname = (char*) palloc(256*sizeof(char));
+	sprintf(recusermodelname,"%sUserModel%ld%ld",
+		recStmt->recname->relname,
+		timestamp.tv_sec,timestamp.tv_usec);
 
-		// We need to select each value combination.
-		attquerystring = (char*) palloc(1024*sizeof(char));
-		sprintf(attquerystring,"SELECT DISTINCT ");
-		for (temp_node = attList; temp_node; temp_node = temp_node->next) {
-			strncat(attquerystring,temp_node->colname,strlen(temp_node->colname));
-			if (temp_node->next)
-				strncat(attquerystring,", ",2);
-		}
-		strncat(attquerystring," FROM ",6);
-		strncat(attquerystring,recStmt->usertable->relname,strlen(recStmt->usertable->relname));
-		strncat(attquerystring,";",2);
+	// Let's name the item model.
+	recitemmodelname = (char*) palloc(256*sizeof(char));
+	sprintf(recitemmodelname,"%sItemModel%ld%ld",
+		recStmt->recname->relname,
+		timestamp.tv_sec,timestamp.tv_usec);
 
-		// Now that we have a query formulated, we look through the
-		// results and insert one entry into the recindex for each
-		// result.
-		queryDesc = recathon_queryStart(attquerystring, &recathoncontext);
-		planstate = queryDesc->planstate;
+	// Let's also name the view.
+	recviewname = (char*) palloc(256*sizeof(char));
+	sprintf(recviewname,"%sView%ld%ld",recStmt->recname->relname,
+		timestamp.tv_sec,timestamp.tv_usec);
 
-		// Look through the results of our SELECT DISTINCT query.
-		for (;;) {
-			int j;
-			int numRatings = 0;
-			char *recindexname, *recusermodelname, *recitemmodelname;
-			struct timeval timestamp;
+	// We need to create two RecModels and do the SVD to populate them.
+	querystring = (char*) palloc(1024*sizeof(char));
+	sprintf(querystring,"CREATE TABLE %s (users INTEGER NOT NULL, feature INTEGER NOT NULL, value REAL NOT NULL);",
+		recusermodelname);
+	// Execute the INSERT.
+	recathon_utilityExecute(querystring);
 
-			// Let's quickly fill in the name of the recIndex,
-			// since it'll be an argument for a later function.
-			recindexname = (char*) palloc((6+strlen(recStmt->relation->relname))*sizeof(char));
-			sprintf(recindexname,"%sIndex",recStmt->relation->relname);
+	sprintf(querystring,"CREATE TABLE %s (items INTEGER NOT NULL, feature INTEGER NOT NULL, value REAL NOT NULL);",
+		recitemmodelname);
+	// Execute the INSERT.
+	recathon_utilityExecute(querystring);
 
-			slot = ExecProcNode(planstate);
-			if (TupIsNull(slot)) break;
+	// Create a blank RecView for use with FILTERRECOMMEND
+	// and JOINRECOMMEND, and populate with a blank tuple.
+	sprintf(querystring,"CREATE TABLE %s (%s INTEGER NOT NULL, %s INTEGER NOT NULL, PRIMARY KEY (%s, %s), %s REAL NOT NULL);",
+		recviewname,
+		recStmt->userkey,recStmt->itemkey,
+		recStmt->userkey,recStmt->itemkey,
+		recStmt->eventval);
+	recathon_utilityExecute(querystring);
 
-			// Scan through the tuple and get all of the attvalues
-			// that correspond to our attnames.
-			for (j = 0; j < numatts; j++)
-				attvalues[j] = getTupleString(slot,attnames[j]);
+	// Insert a dummy tuple into the RecView.
+	sprintf(querystring,"INSERT INTO %s VALUES(-1,-1,-1);",recviewname);
+	recathon_queryExecute(querystring);
 
-			// There's no way a "SELECT DISTINCT" clause is going
-			// to turn up NULL values, so our attvalues array should
-			// be full now.
-			querystring = (char*) palloc(1024*sizeof(char));
-			gettimeofday(&timestamp,NULL);
+	// The task of populating the feature matrices is left to an
+	// external function.
+	numEvents = SVDtrain(recStmt->userkey,recStmt->itemkey,
+		recStmt->eventtable->relname,recStmt->eventval,
+		recusermodelname,recitemmodelname,false);
 
-			// Let's name the user model.
-			recusermodelname = (char*) palloc(256*sizeof(char));
-			sprintf(recusermodelname,"%sUserModel%ld%ld",recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec);
-
-			// Let's name the item model.
-			recitemmodelname = (char*) palloc(256*sizeof(char));
-			sprintf(recitemmodelname,"%sItemModel%ld%ld",recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec);
-
-			// We need to create two RecModels and do the SVD to populate them.
-			querystring = (char*) palloc(1024*sizeof(char));
-			sprintf(querystring,"CREATE TABLE %s (users INTEGER NOT NULL, feature INTEGER NOT NULL, value REAL NOT NULL);",
-				recusermodelname);
-			// Execute the INSERT.
-			recathon_utilityExecute(querystring);
-
-			sprintf(querystring,"CREATE TABLE %s (items INTEGER NOT NULL, feature INTEGER NOT NULL, value REAL NOT NULL);",
-				recitemmodelname);
-			// Execute the INSERT.
-			recathon_utilityExecute(querystring);
-
-			// Create a blank RecView for use with FILTERRECOMMEND
-			// and JOINRECOMMEND, and populate with a blank tuple.
-			sprintf(querystring,"CREATE TABLE %sView%ld%ld (%s INTEGER NOT NULL, %s INTEGER NOT NULL, PRIMARY KEY (%s, %s), recscore REAL NOT NULL);",
-				recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec,
-				recStmt->userkey,recStmt->itemkey,
-				recStmt->userkey,recStmt->itemkey);
-			recathon_utilityExecute(querystring);
-
-			// Insert a dummy tuple into the RecView.
-			sprintf(querystring,"INSERT INTO %sView%ld%ld VALUES(-1,-1,-1);",
-				recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec);
-			recathon_queryExecute(querystring);
-
-			// The task of populating the feature matrices is left to
-			// an external function.
-			numRatings = SVDsimilarity(recStmt->usertable->relname,recStmt->userkey,recStmt->itemtable->relname,
-				recStmt->itemkey,recStmt->ratingtable->relname,recStmt->ratingval,
-				recusermodelname,recitemmodelname,attnames,attvalues,numatts,false);
-
-			// Now we can insert an entry into the index table for this cell.
-			sprintf(querystring,"INSERT INTO %s VALUES (default, '%s', '%s', '%sView%ld%ld', 0, %d, 0, 0.0, 0.0, localtimestamp",
-				recindexname,recusermodelname,recitemmodelname,
-				recStmt->relation->relname,
-				timestamp.tv_sec,timestamp.tv_usec,numRatings);
-			// We need to add the attribute values.
-			for (i = 0; i < numatts; i++) {
-				char addition[256];
-				sprintf(addition,", '%s'",attvalues[i]);
-				strncat(querystring,addition,strlen(addition));
-			}
-			strncat(querystring,");",2);
-			// Now execute the INSERT query.
-			recathon_queryExecute(querystring);
-			pfree(querystring);
-		}
-
-		// Some memory cleanup.
-		recathon_queryEnd(queryDesc, recathoncontext);
-		for (i = 0; i < numatts; i++) {
-			pfree(attnames[i]);
-			pfree(attvalues[i]);
-		}
-		pfree(attnames);
-		pfree(attvalues);
-
-	// In case our recommender is context-free, our work is much easier.
-	} else {
-		int numRatings = 0;
-		char *recindexname, *recusermodelname, *recitemmodelname;
-		struct timeval timestamp;
-
-		// Let's quickly fill in the name of the recIndex,
-		// since it'll be an argument for a later function.
-		recindexname = (char*) palloc((6+strlen(recStmt->relation->relname))*sizeof(char));
-		sprintf(recindexname,"%sIndex",recStmt->relation->relname);
-
-		// Inserting the one entry for the recindex.
-		querystring = (char*) palloc(1024*sizeof(char));
-		gettimeofday(&timestamp,NULL);
-
-		// Let's name the user model.
-		recusermodelname = (char*) palloc(256*sizeof(char));
-		sprintf(recusermodelname,"%sUserModel%ld%ld",recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec);
-
-		// Let's name the item model.
-		recitemmodelname = (char*) palloc(256*sizeof(char));
-		sprintf(recitemmodelname,"%sItemModel%ld%ld",recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec);
-
-		// We need to create two RecModels and do the SVD to populate them.
-		querystring = (char*) palloc(1024*sizeof(char));
-		sprintf(querystring,"CREATE TABLE %s (users INTEGER NOT NULL, feature INTEGER NOT NULL, value REAL NOT NULL);",
-			recusermodelname);
-		// Execute the INSERT.
-		recathon_utilityExecute(querystring);
-
-		sprintf(querystring,"CREATE TABLE %s (items INTEGER NOT NULL, feature INTEGER NOT NULL, value REAL NOT NULL);",
-			recitemmodelname);
-		// Execute the INSERT.
-		recathon_utilityExecute(querystring);
-
-		// Create a blank RecView for use with FILTERRECOMMEND
-		// and JOINRECOMMEND, and populate with a blank tuple.
-		sprintf(querystring,"CREATE TABLE %sView%ld%ld (%s INTEGER NOT NULL, %s INTEGER NOT NULL, PRIMARY KEY (%s, %s), recscore REAL NOT NULL);",
-			recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec,
-			recStmt->userkey,recStmt->itemkey,
-			recStmt->userkey,recStmt->itemkey);
-		recathon_utilityExecute(querystring);
-
-		// Insert a dummy tuple into the RecView.
-		sprintf(querystring,"INSERT INTO %sView%ld%ld VALUES(-1,-1,-1);",
-			recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec);
-		recathon_queryExecute(querystring);
-
-		// The task of populating the feature matrices is left to an
-		// external function.
-		numRatings = SVDsimilarity(recStmt->usertable->relname,recStmt->userkey,recStmt->itemtable->relname,
-			recStmt->itemkey,recStmt->ratingtable->relname,recStmt->ratingval,
-			recusermodelname,recitemmodelname,NULL,NULL,0,false);
-
-		// Now we can insert an entry into the index table for this cell.
-		sprintf(querystring,"INSERT INTO %s VALUES (default, '%s', '%s', '%sView%ld%ld', 0, %d, 0, 0.0, 0.0, localtimestamp);",
-			recindexname,recusermodelname,recitemmodelname,
-			recStmt->relation->relname,
-			timestamp.tv_sec,timestamp.tv_usec,numRatings);
-		// Now execute the INSERT query.
-		recathon_queryExecute(querystring);
-		pfree(querystring);
-	}
+	// Now we can insert an entry into the index table for this cell.
+	sprintf(querystring,"INSERT INTO %s VALUES (default, '%s', '%s', '%s', 0, %d, 0, 0.0, 0.0, localtimestamp);",
+		recindexname,recusermodelname,recitemmodelname,recviewname,numEvents);
+	// Now execute the INSERT query.
+	recathon_queryExecute(querystring);
+	pfree(querystring);
 }
 
 /*
@@ -1308,10 +856,8 @@ standard_ProcessUtility(Node *parsetree,
 		case T_CreateRStmt:
 			{
 				CreateRStmt* recStmt;
-				int numatts;
 				recMethod method;
 				char *querystring;
-				attr_node attr_list, temp_attr;
 				RangeVar *proprv;
 
 				recStmt = (CreateRStmt*) parsetree;
@@ -1320,10 +866,11 @@ standard_ProcessUtility(Node *parsetree,
 				 * SANITY CHECKS
 				 *
 				 * Before we send the data to Recathon, we need to implement a series
-				 * of sanity checks, to make sure the data is actually usable.
+				 * of sanity checks, to make sure the data is actually usable. We'll
+				 * also verify the method we're using.
 				 */
 
-				attr_list = validateCreateRStmt(recStmt, &method, &numatts);
+				method = validateCreateRStmt(recStmt);
 
 				/*
 				 * CREATE TABLES
@@ -1335,37 +882,30 @@ standard_ProcessUtility(Node *parsetree,
 				 */
 
 				// Create the RecModelsCatalogue table, if it doesn't exist.
-				querystring = (char*) palloc(512*sizeof(char));
-				sprintf(querystring,"CREATE TABLE IF NOT EXISTS RecModelsCatalogue (recommenderId serial, PRIMARY KEY (recommenderId), recommenderIndexName VARCHAR NOT NULL, userTable VARCHAR NOT NULL, itemTable VARCHAR NOT NULL, ratingTable VARCHAR NOT NULL, userKey VARCHAR NOT NULL, itemKey VARCHAR NOT NULL, ratingVal VARCHAR NOT NULL, method VARCHAR NOT NULL, contextattributes INTEGER NOT NULL);");
+				querystring = (char*) palloc(1024*sizeof(char));
+				sprintf(querystring,"CREATE TABLE IF NOT EXISTS RecModelsCatalogue (recommenderId serial, PRIMARY KEY (recommenderId), recommenderName VARCHAR NOT NULL, recommenderIndexName VARCHAR NOT NULL, eventTable VARCHAR NOT NULL, userKey VARCHAR NOT NULL, itemKey VARCHAR NOT NULL, eventVal VARCHAR NOT NULL, method VARCHAR NOT NULL);");
 				recathon_utilityExecute(querystring);
-				pfree(querystring);
 
 				// Insert recommender information into the RecModelsCatalogue.
-				querystring = (char*) palloc(1024*sizeof(char));
-				sprintf(querystring,"INSERT INTO RecModelsCatalogue VALUES (default,'%sIndex','%s','%s','%s','%s','%s','%s','%s',%d);",
-					recStmt->relation->relname, recStmt->usertable->relname, recStmt->itemtable->relname,
-					recStmt->ratingtable->relname, recStmt->userkey, recStmt->itemkey, recStmt->ratingval,
-					recStmt->method, numatts);
+				sprintf(querystring,"INSERT INTO RecModelsCatalogue VALUES (default,'%s''%sIndex','%s','%s','%s','%s','%s');",
+					recStmt->recname->relname, recStmt->recname->relname,
+					recStmt->eventtable->relname, recStmt->userkey,
+					recStmt->itemkey, recStmt->eventval, recStmt->method);
 
 				// Execute the query and add this recommender to the catalogue.
 				recathon_queryExecute(querystring);
-				pfree(querystring);
 
-				// Create the RecathonProperties table, if it doesn't exist.
+				// Create the RecDBProperties table, if it doesn't exist.
 				// Here we do an actual check on the table, because we want
 				// to avoid both the table creation and the insert.
-				proprv = makeRangeVar(NULL,"recathonproperties",0);
+				proprv = makeRangeVar(NULL,"recdbproperties",0);
 				if (!relationExists(proprv)) {
-					querystring = (char*) palloc(256*sizeof(char));
-					sprintf(querystring,"CREATE TABLE RecathonProperties (update_threshold REAL NOT NULL, tail_length INTEGER NOT NULL, verbose_queries BOOLEAN NOT NULL);");
+					sprintf(querystring,"CREATE TABLE RecDBProperties (update_threshold REAL NOT NULL, tail_length INTEGER NOT NULL, verbose_queries BOOLEAN NOT NULL);");
 					recathon_utilityExecute(querystring);
-					pfree(querystring);
 
 					// Insert default values into the table.
-					querystring = (char*) palloc(64*sizeof(char));
-					sprintf(querystring,"INSERT INTO RecathonProperties VALUES (0.5, 0, true);");
+					sprintf(querystring,"INSERT INTO RecDBProperties VALUES (0.5, 0, true);");
 					recathon_queryExecute(querystring);
-					pfree(querystring);
 				}
 				pfree(proprv);
 
@@ -1374,19 +914,12 @@ standard_ProcessUtility(Node *parsetree,
 				// SVD uses two different models, while the other methods use only one.
 				// Our index schema will differ as a result.
 				if (method == SVD) {
-					sprintf(querystring,"CREATE TABLE %sIndex (systemId serial, PRIMARY KEY (systemId), recUserModelName VARCHAR NOT NULL, recItemModelName VARCHAR NOT NULL, recViewName VARCHAR NOT NULL, updateCounter INTEGER NOT NULL, ratingTotal INTEGER NOT NULL, queryCounter INTEGER NOT NULL, updateRate REAL NOT NULL, queryRate REAL NOT NULL, levelone_timestamp TIMESTAMP NOT NULL",
-						recStmt->relation->relname);
+					sprintf(querystring,"CREATE TABLE %sIndex (systemId serial, PRIMARY KEY (systemId), recUserModelName VARCHAR NOT NULL, recItemModelName VARCHAR NOT NULL, recViewName VARCHAR NOT NULL, updateCounter INTEGER NOT NULL, eventTotal INTEGER NOT NULL, queryCounter INTEGER NOT NULL, updateRate REAL NOT NULL, queryRate REAL NOT NULL, levelone_timestamp TIMESTAMP NOT NULL);",
+						recStmt->recname->relname);
 				} else {
-					sprintf(querystring,"CREATE TABLE %sIndex (systemId serial, PRIMARY KEY (systemId), recModelName VARCHAR NOT NULL, recViewName VARCHAR NOT NULL, updateCounter INTEGER NOT NULL, ratingTotal INTEGER NOT NULL, queryCounter INTEGER NOT NULL, updateRate REAL NOT NULL, queryRate REAL NOT NULL, levelone_timestamp TIMESTAMP NOT NULL",
-						recStmt->relation->relname);
+					sprintf(querystring,"CREATE TABLE %sIndex (systemId serial, PRIMARY KEY (systemId), recModelName VARCHAR NOT NULL, recViewName VARCHAR NOT NULL, updateCounter INTEGER NOT NULL, eventTotal INTEGER NOT NULL, queryCounter INTEGER NOT NULL, updateRate REAL NOT NULL, queryRate REAL NOT NULL, levelone_timestamp TIMESTAMP NOT NULL);",
+						recStmt->recname->relname);
 				}
-				// Add in the context attributes, if any.
-				for (temp_attr = attr_list; temp_attr; temp_attr = temp_attr->next) {
-					char addition[64];
-					sprintf(addition,", %s VARCHAR NOT NULL",temp_attr->colname);
-					strncat(querystring,addition,strlen(addition));
-				}
-				strncat(querystring,");",2);
 				recathon_utilityExecute(querystring);
 				pfree(querystring);
 
@@ -1399,14 +932,14 @@ standard_ProcessUtility(Node *parsetree,
 				switch (method) {
 					case itemCosCF:
 					case itemPearCF:
-						itemSimilarity(recStmt,attr_list,numatts,method);
+						itemSimilarity(recStmt,method);
 						break;
 					case userCosCF:
 					case userPearCF:
-						userSimilarity(recStmt,attr_list,numatts,method);
+						userSimilarity(recStmt,method);
 						break;
 					case SVD:
-						SVDSimilarity(recStmt,attr_list,numatts);
+						SVDSimilarity(recStmt);
 						break;
 					default:
 						ereport(ERROR,
@@ -1416,9 +949,6 @@ standard_ProcessUtility(Node *parsetree,
 						break;
 				}
 
-				// Free extra memory we used.
-				freeAttributes(attr_list);
-
 				break;
 			}
 
@@ -1426,9 +956,10 @@ standard_ProcessUtility(Node *parsetree,
 		case T_DropRecStmt:
 			{
 				DropRecStmt *dropstmt;
-				int i;
 				char *query_string, *drop_string, *recname, *recindexname, *method;
-				cell_node chead, ctail, ctemp;
+				char *recmodelname = NULL;
+				char *recmodelname2 = NULL;
+				char *recviewname = NULL;
 				RangeVar *cataloguerv;
 				// Query objects.
 				QueryDesc *queryDesc;
@@ -1437,123 +968,110 @@ standard_ProcessUtility(Node *parsetree,
 				MemoryContext recathoncontext;
 
 				dropstmt = (DropRecStmt *) parsetree;
-				recname = dropstmt->recommender->relname;
-				// Convert to lowercase.
-				for (i = 0; i < strlen(recname); i++)
-					recname[i] = tolower(recname[i]);
+				recname = dropstmt->recname->relname;
 
-				// The first thing we do is check to see if this is actually
-				// a recommender.
+				// First off, is there a RecModelsCatalogue at all?
 				cataloguerv = makeRangeVar(NULL,"recmodelscatalogue",0);
 				if (!relationExists(cataloguerv)) {
+					pfree(cataloguerv);
 					ereport(ERROR,
 						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-						 errmsg("no recommenders have been created")));
+						 errmsg("no recommenders have been built")));
 				}
 				pfree(cataloguerv);
 
-				if (!recommenderExists(recname))
+				// If the catalogue does exist, we'll query it looking
+				// for recommenders based on the given information.
+				query_string = (char*) palloc(1024*sizeof(char));
+				sprintf(query_string,"SELECT recommenderindexname, method FROM RecModelsCatalogue WHERE recommenderName = '%s';",
+					recname);
+				queryDesc = recathon_queryStart(query_string,&recathoncontext);
+				planstate = queryDesc->planstate;
+
+				slot = ExecProcNode(planstate);
+				// If there are no results, the recommender does not exist.
+				if (TupIsNull(slot)) {
+					recathon_queryEnd(queryDesc,recathoncontext);
+					pfree(query_string);
 					ereport(ERROR,
 						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-						 errmsg("recommender %s does not exist",recname)));
+						 errmsg("recommender %s not found",recname)));
+				}
 
-				// The first thing we need to know is the recommendation method
-				// used. SVD vs. CF will make a difference.
-				recindexname = (char*) palloc((strlen(recname)+5)*sizeof(char));
-				sprintf(recindexname,"%sIndex",recname);
-				getRecInfo(recindexname,NULL,NULL,NULL,NULL,NULL,NULL,&method,NULL);
-				pfree(recindexname);
+				recindexname = getTupleString(slot,"recommenderindexname");
+				method = getTupleString(slot,"method");
+
+				// Query cleanup.
+				recathon_queryEnd(queryDesc,recathoncontext);
+
+				// Another error check.
+				if (!recindexname)
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+						 errmsg("recommender %s not found",recname)));
 
 				// We need to run a query on the provided recommender
-				// to find all the RecView files we need to delete,
-				// both from the database and the recathondata folder.
-				chead = NULL; ctail = NULL;
-				query_string = (char*) palloc(1024*sizeof(char));
-				sprintf(query_string,"select * from %sindex;",recname);
+				// to find the RecView and RecModel tables we need to
+				// delete.
+				sprintf(query_string,"select * from %s;",recindexname);
 
 				queryDesc = recathon_queryStart(query_string, &recathoncontext);
 				planstate = queryDesc->planstate;
 
-				// Look through query results, storing every cell.
-				for (;;) {
-					cell_node new_cell;
+				// Look through query results.
+				slot = ExecProcNode(planstate);
+				if (TupIsNull(slot))
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+						 errmsg("error obtaining information for recommender %s",recname)));
 
-					slot = ExecProcNode(planstate);
-					if (TupIsNull(slot)) break;
-
-					new_cell = (cell_node) palloc(sizeof(struct cell_node_t));
-					new_cell->next = NULL;
-
-					// Go through this tuple and get the appropriate information.
-					// This will change depending on the recommendation method.
-					if (strcmp(method,"svd") == 0) {
-						new_cell->modelname1 = getTupleString(slot,"recusermodelname");
-						new_cell->modelname2 = getTupleString(slot,"recitemmodelname");
-					} else {
-						new_cell->modelname1 = getTupleString(slot,"recmodelname");
-						new_cell->modelname2 = NULL;
-					}
-					new_cell->viewname = getTupleString(slot,"recviewname");
-
-					// Insert the new cell_node into our list.
-					if (!chead) {
-						chead = new_cell;
-						ctail = new_cell;
-					} else {
-						ctail->next = new_cell;
-						ctail = new_cell;
-					}
+				// Go through this tuple and get the appropriate information.
+				// This will change depending on the recommendation method.
+				if (strcmp(method,"svd") == 0) {
+					recmodelname = getTupleString(slot,"recusermodelname");
+					recmodelname2 = getTupleString(slot,"recitemmodelname");
+				} else {
+					recmodelname = getTupleString(slot,"recmodelname");
+					recmodelname2 = NULL;
 				}
+				recviewname = getTupleString(slot,"recviewname");
 
 				// Now to tidy up.
 				recathon_queryEnd(queryDesc, recathoncontext);
 				pfree(query_string);
 
-				// Quick error check.
-				if (!chead) {
-					ereport(WARNING,
-						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-						 errmsg("failed to find cells for recommender %s",recname)));
+				// We need to remove all associated views and tables.
+				drop_string = (char*) palloc(512*sizeof(char));
+
+				// Delete the first recmodel.
+				if (recmodelname) {
+					sprintf(drop_string,"drop table %s;",recmodelname);
+				recathon_utilityExecute(drop_string);
 				}
 
-				// For every cell, we need to remove all associated views and tables,
-				// then delete the RecView file from the recathondata folder.
-				for (ctemp = chead; ctemp; ctemp = ctemp->next) {
-					drop_string = (char*) palloc(512*sizeof(char));
-
-					// Delete the first recmodel.
-					if (ctemp->modelname1) {
-						sprintf(drop_string,"drop table %s;",ctemp->modelname1);
-					recathon_utilityExecute(drop_string);
-					}
-
-					// Delete the second recmodel.
-					if (ctemp->modelname2) {
-						sprintf(drop_string,"drop table %s;",ctemp->modelname2);
-					recathon_utilityExecute(drop_string);
-					}
-
-					// Delete the recview.
-					if (ctemp->viewname) {
-						sprintf(drop_string,"drop table %s;",ctemp->viewname);
-					recathon_utilityExecute(drop_string);
-					}
-
-					pfree(drop_string);
+				// Delete the second recmodel.
+				if (recmodelname2) {
+					sprintf(drop_string,"drop table %s;",recmodelname2);
+				recathon_utilityExecute(drop_string);
 				}
 
-				// Now we can free up our cell list.
-				freeCellList(chead);
+				// Delete the recview.
+				if (recviewname) {
+					sprintf(drop_string,"drop table %s;",recviewname);
+				recathon_utilityExecute(drop_string);
+				}
+
+				pfree(drop_string);
 
 				// We need to do two more removals: we need to remove the recommender
 				// index table, and then delete it from the recmodelscatalogue.
 				drop_string = (char*) palloc(512*sizeof(char));
-				sprintf(drop_string,"drop table %sindex;",recname);
+				sprintf(drop_string,"drop table %s;",recindexname);
 				recathon_utilityExecute(drop_string);
 
 				// Now for the recmodelscatalogue.
-				sprintf(drop_string,"delete from recmodelscatalogue where recommenderindexname = '%sIndex';",
-						recname);
+				sprintf(drop_string,"delete from recmodelscatalogue where recommenderindexname = '%s';",
+						recindexname);
 				recathon_queryExecute(drop_string);
 
 				pfree(drop_string);

@@ -995,6 +995,10 @@ _equalSelectStmt(const SelectStmt *a, const SelectStmt *b)
 static bool
 _equalRecommendInfo(const RecommendInfo *a, const RecommendInfo *b)
 {
+	COMPARE_NODE_FIELD(userkey);
+	COMPARE_NODE_FIELD(itemkey);
+	COMPARE_NODE_FIELD(eventval);
+	COMPARE_STRING_FIELD(strmethod);
 	COMPARE_NODE_FIELD(recommender);
 	COMPARE_NODE_FIELD(attributes);
 	COMPARE_SCALAR_FIELD(opType);
@@ -1015,6 +1019,7 @@ _equalAttributeInfo(const AttributeInfo *a, const AttributeInfo *b)
 	COMPARE_STRING_FIELD(itemkey);
 	COMPARE_STRING_FIELD(eventval);
 	COMPARE_SCALAR_FIELD(method);
+	COMPARE_STRING_FIELD(recIndexName);
 	COMPARE_STRING_FIELD(recModelName);
 	COMPARE_STRING_FIELD(recModelName2);
 	COMPARE_STRING_FIELD(recViewName);

@@ -1475,6 +1475,7 @@ typedef struct VariableShowStmt
 typedef struct CreateRStmt
 {
 	NodeTag		type;
+	RangeVar	*recname;
 	RangeVar	*eventtable;	/* reference to events table */
 	char		*userkey;	/* users table key */
 	char		*itemkey;	/* items table key */
@@ -1489,8 +1490,7 @@ typedef struct CreateRStmt
 typedef struct DropRecStmt
 {
 	NodeTag		type;
-	RangeVar	*eventtable;	/* the event table used */
-	char		*method;	/* the method used */
+	RangeVar	*recname;	/* the recommender name to drop */
 } DropRecStmt;
 
 /* ----------------------

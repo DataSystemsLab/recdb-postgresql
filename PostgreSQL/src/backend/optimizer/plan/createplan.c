@@ -399,15 +399,12 @@ create_scan_plan(PlannerInfo *root, Path *best_path)
 													scan_clauses);
 			break;
 
-		/* NEW FOR RECATHON */
+		/* NEW FOR RECDB */
 		case T_RecScan:
 			{
 				RecScan *recscan;
 				Scan *subscan;
 
-				/* Previous version of Recathon would allow the
-				 * subscan to be any kind of scan, but now we
-				 * ensure that it's always a SeqScan. */
 				best_path->pathtype = T_SeqScan;
 
 				subscan = (Scan*) create_seqscan_plan(root,
@@ -420,6 +417,7 @@ scan_clauses);
 				/* If we're dealing with a RecScan, it should
 				 * be guaranteed that the recommender node
 				 * is present. */
+//				best_path->pathtype = T_RecScan;
 				recscan = make_rec_from_scan(subscan, rel->recommender);
 				plan = (Plan*) recscan;
 			}

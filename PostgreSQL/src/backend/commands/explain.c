@@ -769,18 +769,24 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				/* We'll mark a strategy depending on a few
 				 * parameters. */
 				RecommendInfo *recInfo;
-				pname = sname = "Recommend Scan";
+				pname = sname = "Recommend";
 
 				recInfo = (RecommendInfo*) ((RecScan*)plan)->recommender;
 				switch(recInfo->opType) {
+					case OP_GENERATE:
+						strategy = "GenerateRecommend";
+						break;
 					case OP_JOIN:
 						strategy = "JoinRecommend";
+						break;
+					case OP_GENERATEJOIN:
+						strategy = "GenerateJoinRecommend";
 						break;
 					case OP_FILTER:
 						strategy = "FilterRecommend";
 						break;
 					case OP_NOFILTER:
-						strategy = "Recommend";
+						strategy = "StandardRecommend";
 						break;
 					case OP_INDEX:
 					default:

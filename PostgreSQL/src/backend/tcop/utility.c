@@ -121,7 +121,7 @@ static void itemSimilarity(CreateRStmt *recStmt, recMethod method) {
 	// Let's quickly fill in the name of the recIndex,
 	// since it'll be an argument for a later function.
 	recindexname = (char*) palloc((6+strlen(recStmt->eventtable->relname)+strlen(recStmt->method))*sizeof(char));
-	sprintf(recindexname,"%s%sIndex",recStmt->eventtable->relname,recStmt->method);
+	sprintf(recindexname,"%sIndex",recStmt->recname->relname);
 
 	// Inserting the one entry for the recindex.
 	querystring = (char*) palloc(1024*sizeof(char));
@@ -129,12 +129,12 @@ static void itemSimilarity(CreateRStmt *recStmt, recMethod method) {
 
 	// Let's name the model.
 	recmodelname = (char*) palloc(256*sizeof(char));
-	sprintf(recmodelname,"%s%sModel%ld%ld",recStmt->eventtable->relname,recStmt->method,
+	sprintf(recmodelname,"%sModel%ld%ld",recStmt->recname->relname,
 		timestamp.tv_sec,timestamp.tv_usec);
 
 	// Let's also name the view.
 	recviewname = (char*) palloc(256*sizeof(char));
-	sprintf(recviewname,"%s%sView%ld%ld",recStmt->eventtable->relname,recStmt->method,
+	sprintf(recviewname,"%sView%ld%ld",recStmt->recname->relname,
 		timestamp.tv_sec,timestamp.tv_usec);
 
 	// We need to create a RecModel and calculate item similarities.
@@ -209,7 +209,7 @@ static void userSimilarity(CreateRStmt *recStmt, recMethod method) {
 	// Let's quickly fill in the name of the recIndex,
 	// since it'll be an argument for a later function.
 	recindexname = (char*) palloc((6+strlen(recStmt->eventtable->relname)+strlen(recStmt->method))*sizeof(char));
-	sprintf(recindexname,"%s%sIndex",recStmt->eventtable->relname,recStmt->method);
+	sprintf(recindexname,"%sIndex",recStmt->recname->relname);
 
 	// Inserting the one entry for the recindex.
 	querystring = (char*) palloc(1024*sizeof(char));
@@ -217,12 +217,12 @@ static void userSimilarity(CreateRStmt *recStmt, recMethod method) {
 
 	// Let's name the model.
 	recmodelname = (char*) palloc(256*sizeof(char));
-	sprintf(recmodelname,"%s%sModel%ld%ld",recStmt->eventtable->relname,recStmt->method,
+	sprintf(recmodelname,"%sModel%ld%ld",recStmt->recname->relname,
 		timestamp.tv_sec,timestamp.tv_usec);
 
 	// Let's also name the view.
 	recviewname = (char*) palloc(256*sizeof(char));
-	sprintf(recviewname,"%s%sView%ld%ld",recStmt->eventtable->relname,recStmt->method,
+	sprintf(recviewname,"%sView%ld%ld",recStmt->recname->relname,
 		timestamp.tv_sec,timestamp.tv_usec);
 
 	// We need to create a recmodel and calculate item similarities.
@@ -277,7 +277,7 @@ static void SVDSimilarity(CreateRStmt *recStmt) {
 	// Let's quickly fill in the name of the recIndex,
 	// since it'll be an argument for a later function.
 	recindexname = (char*) palloc((6+strlen(recStmt->eventtable->relname)+strlen(recStmt->method))*sizeof(char));
-	sprintf(recindexname,"%s%sIndex",recStmt->eventtable->relname,recStmt->method);
+	sprintf(recindexname,"%sIndex",recStmt->recname->relname);
 
 	// Inserting the one entry for the recindex.
 	querystring = (char*) palloc(1024*sizeof(char));
@@ -285,19 +285,19 @@ static void SVDSimilarity(CreateRStmt *recStmt) {
 
 	// Let's name the user model.
 	recusermodelname = (char*) palloc(256*sizeof(char));
-	sprintf(recusermodelname,"%s%sUserModel%ld%ld",
-		recStmt->eventtable->relname,recStmt->method,
+	sprintf(recusermodelname,"%sUserModel%ld%ld",
+		recStmt->recname->relname,
 		timestamp.tv_sec,timestamp.tv_usec);
 
 	// Let's name the item model.
 	recitemmodelname = (char*) palloc(256*sizeof(char));
-	sprintf(recitemmodelname,"%s%sItemModel%ld%ld",
-		recStmt->eventtable->relname,recStmt->method,
+	sprintf(recitemmodelname,"%sItemModel%ld%ld",
+		recStmt->recname->relname,
 		timestamp.tv_sec,timestamp.tv_usec);
 
 	// Let's also name the view.
 	recviewname = (char*) palloc(256*sizeof(char));
-	sprintf(recviewname,"%s%sView%ld%ld",recStmt->eventtable->relname,recStmt->method,
+	sprintf(recviewname,"%sView%ld%ld",recStmt->recname->relname,
 		timestamp.tv_sec,timestamp.tv_usec);
 
 	// We need to create two RecModels and do the SVD to populate them.
@@ -883,14 +883,14 @@ standard_ProcessUtility(Node *parsetree,
 
 				// Create the RecModelsCatalogue table, if it doesn't exist.
 				querystring = (char*) palloc(1024*sizeof(char));
-				sprintf(querystring,"CREATE TABLE IF NOT EXISTS RecModelsCatalogue (recommenderId serial, PRIMARY KEY (recommenderId), recommenderIndexName VARCHAR NOT NULL, eventTable VARCHAR NOT NULL, userKey VARCHAR NOT NULL, itemKey VARCHAR NOT NULL, eventVal VARCHAR NOT NULL, method VARCHAR NOT NULL);");
+				sprintf(querystring,"CREATE TABLE IF NOT EXISTS RecModelsCatalogue (recommenderId serial, PRIMARY KEY (recommenderId), recommenderName VARCHAR NOT NULL, recommenderIndexName VARCHAR NOT NULL, eventTable VARCHAR NOT NULL, userKey VARCHAR NOT NULL, itemKey VARCHAR NOT NULL, eventVal VARCHAR NOT NULL, method VARCHAR NOT NULL);");
 				recathon_utilityExecute(querystring);
 
 				// Insert recommender information into the RecModelsCatalogue.
-				sprintf(querystring,"INSERT INTO RecModelsCatalogue VALUES (default,'%s%sIndex','%s','%s','%s','%s','%s');",
-					recStmt->eventtable->relname, recStmt->method, recStmt->eventtable->relname,
-					recStmt->userkey, recStmt->itemkey, recStmt->eventval,
-					recStmt->method);
+				sprintf(querystring,"INSERT INTO RecModelsCatalogue VALUES (default,'%s','%sIndex','%s','%s','%s','%s','%s');",
+					recStmt->recname->relname, recStmt->recname->relname,
+					recStmt->eventtable->relname, recStmt->userkey,
+					recStmt->itemkey, recStmt->eventval, recStmt->method);
 
 				// Execute the query and add this recommender to the catalogue.
 				recathon_queryExecute(querystring);
@@ -914,11 +914,11 @@ standard_ProcessUtility(Node *parsetree,
 				// SVD uses two different models, while the other methods use only one.
 				// Our index schema will differ as a result.
 				if (method == SVD) {
-					sprintf(querystring,"CREATE TABLE %s%sIndex (systemId serial, PRIMARY KEY (systemId), recUserModelName VARCHAR NOT NULL, recItemModelName VARCHAR NOT NULL, recViewName VARCHAR NOT NULL, updateCounter INTEGER NOT NULL, eventTotal INTEGER NOT NULL, queryCounter INTEGER NOT NULL, updateRate REAL NOT NULL, queryRate REAL NOT NULL, levelone_timestamp TIMESTAMP NOT NULL);",
-						recStmt->eventtable->relname, recStmt->method);
+					sprintf(querystring,"CREATE TABLE %sIndex (systemId serial, PRIMARY KEY (systemId), recUserModelName VARCHAR NOT NULL, recItemModelName VARCHAR NOT NULL, recViewName VARCHAR NOT NULL, updateCounter INTEGER NOT NULL, eventTotal INTEGER NOT NULL, queryCounter INTEGER NOT NULL, updateRate REAL NOT NULL, queryRate REAL NOT NULL, levelone_timestamp TIMESTAMP NOT NULL);",
+						recStmt->recname->relname);
 				} else {
-					sprintf(querystring,"CREATE TABLE %s%sIndex (systemId serial, PRIMARY KEY (systemId), recModelName VARCHAR NOT NULL, recViewName VARCHAR NOT NULL, updateCounter INTEGER NOT NULL, eventTotal INTEGER NOT NULL, queryCounter INTEGER NOT NULL, updateRate REAL NOT NULL, queryRate REAL NOT NULL, levelone_timestamp TIMESTAMP NOT NULL);",
-						recStmt->eventtable->relname, recStmt->method);
+					sprintf(querystring,"CREATE TABLE %sIndex (systemId serial, PRIMARY KEY (systemId), recModelName VARCHAR NOT NULL, recViewName VARCHAR NOT NULL, updateCounter INTEGER NOT NULL, eventTotal INTEGER NOT NULL, queryCounter INTEGER NOT NULL, updateRate REAL NOT NULL, queryRate REAL NOT NULL, levelone_timestamp TIMESTAMP NOT NULL);",
+						recStmt->recname->relname);
 				}
 				recathon_utilityExecute(querystring);
 				pfree(querystring);
@@ -956,10 +956,11 @@ standard_ProcessUtility(Node *parsetree,
 		case T_DropRecStmt:
 			{
 				DropRecStmt *dropstmt;
-				char *query_string, *drop_string, *eventtable, *recindexname, *method;
+				char *query_string, *drop_string, *recname, *recindexname, *method;
 				char *recmodelname = NULL;
 				char *recmodelname2 = NULL;
 				char *recviewname = NULL;
+				RangeVar *cataloguerv;
 				// Query objects.
 				QueryDesc *queryDesc;
 				PlanState *planstate;
@@ -967,21 +968,51 @@ standard_ProcessUtility(Node *parsetree,
 				MemoryContext recathoncontext;
 
 				dropstmt = (DropRecStmt *) parsetree;
-				eventtable = dropstmt->eventtable->relname;
-				method = dropstmt->method;
+				recname = dropstmt->recname->relname;
 
-				// The first thing we do is check to see if this is actually
-				// a recommender.
-				recindexname = retrieveRecommender(eventtable,method);
+				// First off, is there a RecModelsCatalogue at all?
+				cataloguerv = makeRangeVar(NULL,"recmodelscatalogue",0);
+				if (!relationExists(cataloguerv)) {
+					pfree(cataloguerv);
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+						 errmsg("no recommenders have been built")));
+				}
+				pfree(cataloguerv);
+
+				// If the catalogue does exist, we'll query it looking
+				// for recommenders based on the given information.
+				query_string = (char*) palloc(1024*sizeof(char));
+				sprintf(query_string,"SELECT recommenderindexname, method FROM RecModelsCatalogue WHERE recommenderName = '%s';",
+					recname);
+				queryDesc = recathon_queryStart(query_string,&recathoncontext);
+				planstate = queryDesc->planstate;
+
+				slot = ExecProcNode(planstate);
+				// If there are no results, the recommender does not exist.
+				if (TupIsNull(slot)) {
+					recathon_queryEnd(queryDesc,recathoncontext);
+					pfree(query_string);
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+						 errmsg("recommender %s not found",recname)));
+				}
+
+				recindexname = getTupleString(slot,"recommenderindexname");
+				method = getTupleString(slot,"method");
+
+				// Query cleanup.
+				recathon_queryEnd(queryDesc,recathoncontext);
+
+				// Another error check.
 				if (!recindexname)
 					ereport(ERROR,
 						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-						 errmsg("no recommender built on table %s using method %s",eventtable,method)));
+						 errmsg("recommender %s not found",recname)));
 
 				// We need to run a query on the provided recommender
 				// to find the RecView and RecModel tables we need to
 				// delete.
-				query_string = (char*) palloc(1024*sizeof(char));
 				sprintf(query_string,"select * from %s;",recindexname);
 
 				queryDesc = recathon_queryStart(query_string, &recathoncontext);
@@ -989,7 +1020,10 @@ standard_ProcessUtility(Node *parsetree,
 
 				// Look through query results.
 				slot = ExecProcNode(planstate);
-				if (TupIsNull(slot)) break;
+				if (TupIsNull(slot))
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+						 errmsg("error obtaining information for recommender %s",recname)));
 
 				// Go through this tuple and get the appropriate information.
 				// This will change depending on the recommendation method.

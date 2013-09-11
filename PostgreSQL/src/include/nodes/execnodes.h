@@ -1508,6 +1508,7 @@ typedef struct RecScanState
 	ScanState	*subscan;		/* need to hold additional structs */
 	Node		*attributes;		/* an AttributeInfo object */
 	bool		useRecView;		/* are we going to use the RecView? */
+	bool		initialized;		/* have we done structure initialization? */
 	/* user list information */
 	int		totalUsers;		/* the number of users */
 	int 		userNum;		/* which user we're on */
@@ -1682,9 +1683,12 @@ typedef struct RecJoinState
 {
 	JoinState	js;
 	NestLoopState	*subjoin;
-	RecScanState	*recnode;	/* stored to simplify our lives a bit */
-	PlanState	*innerscan;	/* and again */
-	GenHash		*itemTable;	/* a hash table of all the items we need to predict */
+	RecScanState	*recnode;		/* stored to simplify our lives a bit */
+	PlanState	*innerscan;		/* and again */
+	GenHash		*itemTable;		/* a hash table of all the items we need to predict */
+	bool		rj_NeedNewOuter;	/* for loop control */
+	bool		rj_MatchedOuter;	/* for loop control */
+	int		innerTupleAtt;		/* the att number for the key att of the inner tuple */
 } RecJoinState;
 
 

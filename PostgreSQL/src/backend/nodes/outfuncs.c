@@ -2055,6 +2055,10 @@ _outRecommendInfo(StringInfo str, const RecommendInfo *node)
 {
 	WRITE_NODE_TYPE("RECOMMEND");
 
+	WRITE_NODE_FIELD(userkey);
+	WRITE_NODE_FIELD(itemkey);
+	WRITE_NODE_FIELD(eventval);
+	WRITE_STRING_FIELD(strmethod);
 	WRITE_NODE_FIELD(recommender);
 	WRITE_NODE_FIELD(attributes);
 	WRITE_INT_FIELD(opType);
@@ -2075,6 +2079,7 @@ _outAttributeInfo(StringInfo str, const AttributeInfo *node)
 	WRITE_STRING_FIELD(itemkey);
 	WRITE_STRING_FIELD(eventval);
 	WRITE_INT_FIELD(method);
+	WRITE_STRING_FIELD(recIndexName);
 	WRITE_STRING_FIELD(recModelName);
 	WRITE_STRING_FIELD(recModelName2);
 	WRITE_STRING_FIELD(recViewName);

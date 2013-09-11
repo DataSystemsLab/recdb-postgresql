@@ -2516,6 +2516,10 @@ _copyRecommendInfo(const RecommendInfo *from)
 {
 	RecommendInfo *newnode = makeNode(RecommendInfo);
 
+	COPY_NODE_FIELD(userkey);
+	COPY_NODE_FIELD(itemkey);
+	COPY_NODE_FIELD(eventval);
+	COPY_STRING_FIELD(strmethod);
 	COPY_NODE_FIELD(recommender);
 	COPY_NODE_FIELD(attributes);
 	COPY_SCALAR_FIELD(opType);
@@ -2538,6 +2542,7 @@ _copyAttributeInfo(const AttributeInfo *from)
 	COPY_STRING_FIELD(itemkey);
 	COPY_STRING_FIELD(eventval);
 	COPY_SCALAR_FIELD(method);
+	COPY_STRING_FIELD(recIndexName);
 	COPY_STRING_FIELD(recModelName);
 	COPY_STRING_FIELD(recModelName2);
 	COPY_STRING_FIELD(recViewName);

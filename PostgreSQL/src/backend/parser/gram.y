@@ -2441,30 +2441,32 @@ copy_generic_opt_arg_list_item:
  *
  *****************************************************************************/
 
-CreateRStmt:	CREATE RECOMMENDER ON qualified_name
+CreateRStmt:	CREATE RECOMMENDER qualified_name ON qualified_name
 			USERS FROM ColId
 			ITEMS FROM ColId
 			EVENTS FROM ColId
 			USING ColId
 				{
 					CreateRStmt *n = makeNode(CreateRStmt);
-					n->eventtable = $4;
-					n->userkey = $7;
-					n->itemkey = $10;
-					n->eventval = $13;
-					n->method = $15;
+					n->recname = $3;
+					n->eventtable = $5;
+					n->userkey = $8;
+					n->itemkey = $11;
+					n->eventval = $14;
+					n->method = $16;
 					$$ = (Node *)n;
 				}
-		|	CREATE RECOMMENDER ON qualified_name
+		|	CREATE RECOMMENDER qualified_name ON qualified_name
 			USERS FROM ColId
 			ITEMS FROM ColId
 			EVENTS FROM ColId
 				{
 					CreateRStmt *n = makeNode(CreateRStmt);
-					n->eventtable = $4;
-					n->userkey = $7;
-					n->itemkey = $10;
-					n->eventval = $13;
+					n->recname = $3;
+					n->eventtable = $5;
+					n->userkey = $8;
+					n->itemkey = $11;
+					n->eventval = $14;
 					n->method = NULL;
 					$$ = (Node *)n;
 				}
@@ -2477,11 +2479,10 @@ CreateRStmt:	CREATE RECOMMENDER ON qualified_name
  *
  *****************************************************************************/
 
-DropRecStmt:	DROP RECOMMENDER ON qualified_name USING ColId
+DropRecStmt:	DROP RECOMMENDER qualified_name
 				{
 					DropRecStmt *n = makeNode(DropRecStmt);
-					n->eventtable = $4;
-					n->method = $6;
+					n->recname = $3;
 					$$ = (Node *)n;
 				}
 		;

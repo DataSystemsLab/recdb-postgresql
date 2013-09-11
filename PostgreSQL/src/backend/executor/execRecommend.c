@@ -41,6 +41,7 @@ static TupleTableSlot* ExecIndexRecommend(RecScanState *recnode,
 static TupleTableSlot* ExecFilterRecommend(RecScanState *recnode,
 					 ExecScanAccessMtd accessMtd,
 					 ExecScanRecheckMtd recheckMtd);
+static void InitializeRecommender(RecScanState *recstate);
 
 /*
  * ExecRecFetch -- fetch next potential tuple
@@ -355,6 +356,11 @@ ExecFilterRecommend(RecScanState *recnode,
 
 		slot = recnode->ss.ps.ps_ResultTupleSlot;
 
+		/* The first thing we need to do is initialize our recommender
+		 * model and other things, if we haven't done so already. */
+		if (!recnode->initialized)
+			InitializeRecommender(recnode);
+
 		/*
 		 * If we've exhausted our item list, then we're totally
 		 * finished. We set a flag for this. It's possible that
@@ -409,10 +415,6 @@ ExecFilterRecommend(RecScanState *recnode,
 					recnode->itematt = i;
 				else if (strcmp(col_name,attributes->eventval) == 0)
 					recnode->eventatt = i;
-
-				/* Mark slot. */
-				slot->tts_isnull[i] = false;
-				slot->tts_nvalid++;
 			}
 		}
 
@@ -656,19 +658,14 @@ ExecRecRestrPos(RecScanState *node)
 }
 
 /*
- * ExecInitRecScan
+ * InitializeRecommender
  *
- * This function will initialize the recommender information, as well as
- * whatever scan type we have.
+ * This function will initialize the recommender information we need.
  */
-RecScanState *
-ExecInitRecScan(RecScan *node, EState *estate, int eflags)
-{
+static void
+InitializeRecommender(RecScanState *recstate) {
 	int i;
-	RecScanState *recstate;
-	ScanState *scanstate;
 	AttributeInfo *attributes;
-	NodeTag type;
 	// Query objects.
 	char *querystring;
 	QueryDesc *queryDesc;
@@ -676,75 +673,8 @@ ExecInitRecScan(RecScan *node, EState *estate, int eflags)
 	TupleTableSlot *hslot;
 	MemoryContext recathoncontext;
 
-	recstate = (RecScanState*) makeNode(RecScanState);
-	type = node->subscan->plan.type;
-	node->subscan->plan = node->scan.plan;
-	node->subscan->scanrelid = node->scan.scanrelid;
-	node->subscan->plan.type = type;
+	attributes = (AttributeInfo*) recstate->attributes;
 
-	/* Before we do the Init, we need to update the subscan plan. We utilize
-	 * a SeqScan as our subscan, but we have a failsafe just in case. */
-	switch(nodeTag(node->subscan)) {
-		case T_SeqScan:
-			scanstate = (ScanState*) ExecInitSeqScan((SeqScan *) node->subscan, estate, eflags);
-			break;
-		default:
-			elog(ERROR, "invalid RecScan subscan type: %d", (int) nodeTag(node->subscan));
-			scanstate = NULL;		/* keep compiler quiet */
-			break;
-	}
-
-	/* Plug in our scan state. */
-	recstate->subscan = scanstate;
-	/* Now for regular scan info. Kind of redundant but not much we can do. */
-	recstate->ss.ps = scanstate->ps;
-	recstate->ss.ss_currentRelation = scanstate->ss_currentRelation;
-	recstate->ss.ss_currentScanDesc = scanstate->ss_currentScanDesc;
-	recstate->ss.ss_ScanTupleSlot = scanstate->ss_ScanTupleSlot;
-	/* And we substitute the tag. */
-	recstate->ss.ps.type = T_RecScanState;
-
-	/* With the scan taken care of, we need to initialize the actual recommender. */
-
-	/* Copy information right from the recommender. */
-	recstate->attributes = (Node*) ((RecommendInfo*)node->recommender)->attributes;
-	attributes = (AttributeInfo *) recstate->attributes;
-
-	/* Code for a future version of RecDB. */
-/*	switch(attributes->cellType) {
-		case CELL_ALPHA:
-			{
-				char *heavystring;
-
-				heavystring = (char*) palloc(1024*sizeof(char));
-				sprintf(heavystring,"select userid from recathonheavyusers where userid = %d;",
-						attributes->userID);
-				queryDesc = recathon_queryStart(heavystring, &recathoncontext);
-				planstate = queryDesc->planstate;
-
-				hslot = ExecProcNode(planstate);
-				if (TupIsNull(hslot))
-					recstate->useRecView = false;
-				else
-					recstate->useRecView = true;
-
-				recathon_queryEnd(queryDesc, recathoncontext);
-				pfree(heavystring);
-			}
-
-			break;
-		case CELL_GAMMA:
-			recstate->useRecView = true;
-			break;
-		case CELL_BETA:
-			recstate->useRecView = false;
-			break;
-		default:
-			elog(ERROR, "unrecognized cell type: %d",
-				(int) ((RecommendInfo*)node->recommender)->attributes->cellType);
-			break;
-	}
-*/
 	/* Our next step is to get the list of all users who participated in the
 	 * events table. At the least, we need to consider each one up until the
 	 * point where WHERE filters are applied. Any user IDs that survive that
@@ -899,13 +829,108 @@ ExecInitRecScan(RecScan *node, EState *estate, int eflags)
 		}
 	}
 
-	/* Lastly, we also need to increase the query counter for this particular table,
-	 * if it exists already. If this was on-the-fly, forget it. */
+	/* We also need to increase the query counter for this particular table,
+	 * if it exists already. If this was on-the-fly, forget it. Also don't do it if our
+	 * recommender was never initialized. */
 	if (attributes->recIndexName) {
+		char *querystring = (char*) palloc(1024*sizeof(char));
 		sprintf(querystring,"update %s set querycounter = querycounter+1;",attributes->recIndexName);
 		recathon_queryExecute(querystring);
+		pfree(querystring);
 	}
-	pfree(querystring);
+
+	/* Lastly, mark this as initialized. */
+	recstate->initialized = true;
+}
+
+/*
+ * ExecInitRecScan
+ *
+ * This function will initialize our scan information.
+ */
+RecScanState *
+ExecInitRecScan(RecScan *node, EState *estate, int eflags)
+{
+	RecScanState *recstate;
+	ScanState *scanstate;
+	AttributeInfo *attributes;
+	NodeTag type;
+
+	recstate = (RecScanState*) makeNode(RecScanState);
+	type = node->subscan->plan.type;
+	node->subscan->plan = node->scan.plan;
+	node->subscan->scanrelid = node->scan.scanrelid;
+	node->subscan->plan.type = type;
+
+	/* Before we do the Init, we need to update the subscan plan. We utilize
+	 * a SeqScan as our subscan, but we have a failsafe just in case. */
+	switch(nodeTag(node->subscan)) {
+		case T_SeqScan:
+			scanstate = (ScanState*) ExecInitSeqScan((SeqScan *) node->subscan, estate, eflags);
+			break;
+		default:
+			elog(ERROR, "invalid RecScan subscan type: %d", (int) nodeTag(node->subscan));
+			scanstate = NULL;		/* keep compiler quiet */
+			break;
+	}
+
+	/* Plug in our scan state. */
+	recstate->subscan = scanstate;
+	/* Now for regular scan info. Kind of redundant but not much we can do. */
+	recstate->ss.ps = scanstate->ps;
+	recstate->ss.ss_currentRelation = scanstate->ss_currentRelation;
+	recstate->ss.ss_currentScanDesc = scanstate->ss_currentScanDesc;
+	recstate->ss.ss_ScanTupleSlot = scanstate->ss_ScanTupleSlot;
+	/* And we substitute the tag, and other EXPLAIN info. */
+	recstate->ss.ps.type = T_RecScanState;
+	recstate->ss.ps.plan->type = T_RecScan;
+	((RecScan*)recstate->ss.ps.plan)->recommender = node->recommender;
+
+	/* With the scan taken care of, we need to initialize the actual recommender. */
+
+	/* Copy information right from the recommender. */
+	recstate->attributes = (Node*) ((RecommendInfo*)node->recommender)->attributes;
+	attributes = (AttributeInfo *) recstate->attributes;
+
+	/* Mark this recommender as NOT initialized. We're moving a lot of time-consuming
+	 * stuff out of Init and into Execute, to make EXPLAIN go faster. */
+	recstate->initialized = false;
+
+	/* Code for a future version of RecDB. */
+/*	switch(attributes->cellType) {
+		case CELL_ALPHA:
+			{
+				char *heavystring;
+
+				heavystring = (char*) palloc(1024*sizeof(char));
+				sprintf(heavystring,"select userid from recathonheavyusers where userid = %d;",
+						attributes->userID);
+				queryDesc = recathon_queryStart(heavystring, &recathoncontext);
+				planstate = queryDesc->planstate;
+
+				hslot = ExecProcNode(planstate);
+				if (TupIsNull(hslot))
+					recstate->useRecView = false;
+				else
+					recstate->useRecView = true;
+
+				recathon_queryEnd(queryDesc, recathoncontext);
+				pfree(heavystring);
+			}
+
+			break;
+		case CELL_GAMMA:
+			recstate->useRecView = true;
+			break;
+		case CELL_BETA:
+			recstate->useRecView = false;
+			break;
+		default:
+			elog(ERROR, "unrecognized cell type: %d",
+				(int) ((RecommendInfo*)node->recommender)->attributes->cellType);
+			break;
+	}
+*/
 
 	/* In the current version of Recathon, we will not be using
 	 * IndexRecommend at all.  */
@@ -948,6 +973,10 @@ ExecRecScan(RecScanState *node)
 void
 ExecEndRecScan(RecScanState *node)
 {
+	AttributeInfo* attributes;
+
+	attributes = (AttributeInfo*) node->attributes;
+
 	/* End the normal scan. */
 	switch(nodeTag(node->subscan)) {
 		case T_SeqScanState:

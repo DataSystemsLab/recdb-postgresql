@@ -83,7 +83,7 @@ transformRecommendClause(ParseState *pstate, List **targetlist, SelectStmt *stmt
 
 	// Step three: see if we are joining the user ID or item ID to another table, in
 	// which case we want to perform a RecJoin.
-	applyRecJoin(stmt->whereClause, stmt->fromClause, recInfo);
+//	applyRecJoin(stmt->whereClause, stmt->fromClause, recInfo);
 
 	// Step four: now that we've verified the correctness of our query, we need to
 	// see if a recommender already exists for a given table and method. If so, we'll
@@ -274,6 +274,9 @@ getTableRef(ColumnRef *colref, char **colname) {
 	ListCell* col_cell;
 	Value* col_string;
 	int i;
+
+	if (!colref)
+		return NULL;
 
 	if (nodeTag(colref) != T_ColumnRef) {
 		(*colname) = NULL;

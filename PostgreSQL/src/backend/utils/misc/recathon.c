@@ -822,7 +822,7 @@ recMethod
 validateCreateRStmt(CreateRStmt *recStmt) {
 	recMethod method;
 
-	// Our first test is to make sure the events table exists.
+	// Our first test is to make sure the ratings table exists.
 	if (!relationExists(recStmt->eventtable))
 		ereport(ERROR,
 			(errcode(ERRCODE_UNDEFINED_TABLE),
@@ -830,7 +830,18 @@ validateCreateRStmt(CreateRStmt *recStmt) {
 				recStmt->eventtable->relname)));
 
 	// Our second test is to see whether or not a recommender has already
-	// been created with the given events table and method.
+	// been created with the given events table and method, or name.
+	if (relationExists(recStmt->recname))
+		ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_TABLE),
+			 errmsg("a recommender with name \"%s\" already exists",
+				recStmt->recname->relname)));
+
+	if (retrieveRecommender(recStmt->eventtable->relname,recStmt->method) != NULL)
+		ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_TABLE),
+			 errmsg("recommender on table \"%s\" using method \"%s\" already exists",
+				recStmt->eventtable->relname,recStmt->method)));
 
 	// We next need to test that the provided columns
 	// exist in the events table.
@@ -4256,6 +4267,9 @@ hashFind(GenHash *table, int itemID)
 void
 freeHash(GenHash *table) {
 	int i;
+
+	if (!table)
+		return;
 
 	for (i = 0; i < table->hash; i++) {
 		GenRating *tempRating;
