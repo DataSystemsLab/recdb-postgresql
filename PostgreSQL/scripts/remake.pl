@@ -1,4 +1,7 @@
 #!/usr/bin/perl
+
+# Rebuild and Compile RecDB
+
 use strict;
 use warnings;
 
