@@ -1,4 +1,7 @@
 #!/usr/bin/perl
+
+# Start RecDB Frontend (psql)
+
 use strict;
 use warnings;
 
