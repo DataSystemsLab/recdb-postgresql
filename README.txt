@@ -66,13 +66,15 @@ perl clean.pl [db_name] [server_host]
 We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory.
 
 ### Recommendation Query
-In the recommendation query, the user needst specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to generate recommendation. An example is given below:
+In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if MovieRatings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based the rating prediceted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:
 
 ```
 SELECT * FROM RATINGS R
 RECOMMEND R.itemid TO R.userid ON R.ratingval
 USING ItemCosCF
 WHERE R.userid = 1
+OREDER BY R.ratingval
+LIMIT 10
 ```
 
 ### Materializing Recommenders
