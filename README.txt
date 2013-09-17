@@ -69,7 +69,7 @@ We provide the MovieLens data to build a "Hello-World" movie recommendation appl
 In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if MovieRatings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based the rating prediceted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:
 
 ```
-SELECT * FROM RATINGS R
+SELECT * FROM MovieRatings R
 RECOMMEND R.itemid TO R.userid ON R.ratingval
 USING ItemCosCF
 WHERE R.userid = 1
@@ -78,6 +78,15 @@ LIMIT 10
 ```
 
 ### Materializing Recommenders
+```
+CREATE RECOMMENDER ON MovieRatings
+USERS FROM userid
+ITEMS FROM itemsid
+EVENTS FROM ratingid
+USING ItemCosCF
+
+```
+
 
 ### Support or Contact
 Having trouble with RecDB ? contact sarwat@cs.umn.edu and we’ll help you sort it out.
