@@ -1,4 +1,6 @@
 #!/usr/bin/perl
+# cleans the database
+
 use strict;
 use warnings;
 
