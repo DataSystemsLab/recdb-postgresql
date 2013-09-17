@@ -92,12 +92,14 @@
 <h3>
 <a name="recommendation-query" class="anchor" href="#recommendation-query"><span class="octicon octicon-link"></span></a>Recommendation Query</h3>
 
-<p>In the recommendation query, the user needst specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to generate recommendation. An example is given below:</p>
+<p>In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if MovieRatings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based the rating prediceted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:</p>
 
 <pre><code>SELECT * FROM RATINGS R
 RECOMMEND R.itemid TO R.userid ON R.ratingval
 USING ItemCosCF
 WHERE R.userid = 1
+OREDER BY R.ratingval
+LIMIT 10
 </code></pre>
 
 <h3>
