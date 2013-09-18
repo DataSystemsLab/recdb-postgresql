@@ -2,7 +2,7 @@
 An Open Source Recommendation Engine Built Entirely Inside PostgreSQL 9.2. RecDB allows application developers to build recommendation applications in a heartbeat through a wide variety of built-in recommendation algorithms like user-user collaborative filtering, item-item collaborative filtering, singular value decomposition. Applications powered by RecDB can produce online and flexible personalized recommendations to end-users. You can check out the code, as follows:
 
 ```
-$ ssh clone https://github.com/Sarwat/recdb-postgresql.git
+$ git clone https://github.com/Sarwat/recdb-postgresql.git
 ```
 
 
@@ -10,7 +10,7 @@ If you're using the GitHub for Mac, simply sync your repository and you'll see t
 
 ### Installation
 
-Once you've synced with GitHub, the folder should contain the source code for PostgreSQL, as well as several Perl scripts and several different .jar files.
+Once you've synced with GitHub, the folder should contain the source code for PostgreSQL, as well as several Perl scripts in a folder named "script/".
 
 1. Run the installation script install.pl.
 
