@@ -78,6 +78,8 @@ LIMIT 10
 ```
 
 ### Materializing Recommenders
+Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency.
+
 ```
 CREATE RECOMMENDER ON MovieRatings
 USERS FROM userid
