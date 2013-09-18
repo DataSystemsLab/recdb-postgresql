@@ -105,6 +105,8 @@ LIMIT 10
 <h3>
 <a name="materializing-recommenders" class="anchor" href="#materializing-recommenders"><span class="octicon octicon-link"></span></a>Materializing Recommenders</h3>
 
+<p>Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency.</p>
+
 <pre><code>CREATE RECOMMENDER ON MovieRatings
 USERS FROM userid
 ITEMS FROM itemsid
