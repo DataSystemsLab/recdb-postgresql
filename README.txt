@@ -10,7 +10,7 @@ If you're using the GitHub for Mac, simply sync your repository and you'll see t
 
 ### Installation
 
-Once you've synced with GitHub, the folder should contain the source code for PostgreSQL, as well as several Perl scripts in a folder named "script/".
+Once you've synced with GitHub, the folder should contain the source code for PostgreSQL, as well as several Perl scripts in a directory named "./PostgreSQL/scripts/".
 
 1. Run the installation script install.pl.
 
@@ -23,7 +23,7 @@ perl install.pl [abs_path]
 2. Run the database server script pgstart.pl.
 
 ```
-perl pgstart.pl
+perl pgbackend.pl
 ```
 
 The install.pl script stores the install path, so there shouldn't be any need to specify it.
@@ -31,7 +31,7 @@ The install.pl script stores the install path, so there shouldn't be any need to
 3. In a second terminal, run the database interaction script dbstart.pl.
 
 ```
-perl dbstart.pl [db_name] [server_host]
+perl pgfrontend.pl [db_name] [server_host]
 ```
 
 [db_name] is the name of the database that you intend to use.
