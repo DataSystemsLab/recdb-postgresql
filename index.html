@@ -101,7 +101,7 @@
 RECOMMEND R.itemid TO R.userid ON R.ratingval
 USING ItemCosCF
 WHERE R.userid = 1
-OREDER BY R.ratingval
+ORDER BY R.ratingval
 LIMIT 10
 </code></pre>
 
@@ -114,7 +114,7 @@ LIMIT 10
 
 <pre><code>CREATE RECOMMENDER MovieRec ON MovieRatings
 USERS FROM userid
-ITEMS FROM itemsid
+ITEMS FROM itemid
 EVENTS FROM ratingid
 USING ItemCosCF
 </code></pre>
