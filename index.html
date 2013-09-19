@@ -36,30 +36,33 @@
 <pre><code>$ git clone https://github.com/Sarwat/recdb-postgresql.git
 </code></pre>
 
-<p>If you're using the GitHub for Mac, simply sync your repository and you'll see the new branch.</p>
+<h3>
+<a name="recommended-specifications" class="anchor" href="#recommended-specifications"><span class="octicon octicon-link"></span></a>Recommended Specifications</h3>
+
+<p>RecDB is designed to be run on a Unix operating system. At least 1GB of RAM is recommended for most queries, though when working with very large data sets more RAM may be desirable, especially when you are not working with apriori recommenders.</p>
 
 <h3>
 <a name="installation" class="anchor" href="#installation"><span class="octicon octicon-link"></span></a>Installation</h3>
 
-<p>Once you've synced with GitHub, the folder should contain the source code for PostgreSQL, as well as several Perl scripts in a folder named "script/".</p>
+<p>Once you've synced with GitHub, the folder should contain the source code for PostgreSQL, as well as several Perl scripts in a directory named "./PostgreSQL/scripts/". If you are familiar with installing PostgreSQL from source, RecDB is installed the exact same way; for the sake of simplicity, however, we have included these scripts that will simplify the process. Note that the installation and remake-related scripts MUST be run from within the PostgreSQL folder in order for them to work correctly.</p>
 
 <ol>
 <li>Run the installation script install.pl.</li>
 </ol><pre><code>perl install.pl [abs_path]
 </code></pre>
 
-<p>[abs_path] is the absolute path to the directory where you want PostgreSQL installed. The directory should exist before running this script.</p>
+<p>[abs_path] is the absolute path to the directory where you want PostgreSQL installed. The directory should exist before running this script. This will also create a folder "data" in the PostgreSQL folder; this is where the database will be located.</p>
 
 <ol>
-<li>Run the database server script pgstart.pl.</li>
-</ol><pre><code>perl pgstart.pl
+<li>Run the database server script pgbackend.pl.</li>
+</ol><pre><code>perl pgbackend.pl
 </code></pre>
 
-<p>The install.pl script stores the install path, so there shouldn't be any need to specify it.</p>
+<p>The install.pl script stores the install path in a separate file, so there shouldn't be any need to specify it.</p>
 
 <ol>
-<li>In a second terminal, run the database interaction script dbstart.pl.</li>
-</ol><pre><code>perl dbstart.pl [db_name] [server_host]
+<li>In a second terminal, run the database interaction script pgfrontend.pl.</li>
+</ol><pre><code>perl pgfrontend.pl [db_name] [server_host]
 </code></pre>
 
 <p>[db_name] is the name of the database that you intend to use.
@@ -92,7 +95,7 @@
 <h3>
 <a name="recommendation-query" class="anchor" href="#recommendation-query"><span class="octicon octicon-link"></span></a>Recommendation Query</h3>
 
-<p>In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if MovieRatings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based the rating prediceted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:</p>
+<p>In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if MovieRatings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based on the rating predicted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:</p>
 
 <pre><code>SELECT * FROM MovieRatings R
 RECOMMEND R.itemid TO R.userid ON R.ratingval
@@ -102,17 +105,23 @@ OREDER BY R.ratingval
 LIMIT 10
 </code></pre>
 
+<p>The available methods are ItemCosCF, ItemPearCF, UserCosCF, UserPearCF, and SVD. Note that if you do not specify which user(s) you want recommendations for, it will generate recommendations for all users, which can take an extremely long time to finish.</p>
+
 <h3>
 <a name="materializing-recommenders" class="anchor" href="#materializing-recommenders"><span class="octicon octicon-link"></span></a>Materializing Recommenders</h3>
 
 <p>Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency.</p>
 
-<pre><code>CREATE RECOMMENDER ON MovieRatings
+<pre><code>CREATE RECOMMENDER MovieRec ON MovieRatings
 USERS FROM userid
 ITEMS FROM itemsid
 EVENTS FROM ratingid
 USING ItemCosCF
+</code></pre>
 
+<p>Similarly, materialized recommenders can be removed with the following command:</p>
+
+<pre><code>DROP RECOMMENDER MovieRec
 </code></pre>
 
 <h3>
