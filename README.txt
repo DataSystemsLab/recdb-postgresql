@@ -87,7 +87,7 @@ Users may create recommenders apriori so that when a recommendation query is iss
 ```
 CREATE RECOMMENDER MovieRec ON MovieRatings
 USERS FROM userid
-ITEMS FROM itemsid
+ITEMS FROM itemid
 EVENTS FROM ratingid
 USING ItemCosCF
 ```
