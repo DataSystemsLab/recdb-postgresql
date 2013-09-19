@@ -75,7 +75,7 @@ SELECT * FROM MovieRatings R
 RECOMMEND R.itemid TO R.userid ON R.ratingval
 USING ItemCosCF
 WHERE R.userid = 1
-OREDER BY R.ratingval
+ORDER BY R.ratingval
 LIMIT 10
 ```
 
