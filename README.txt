@@ -20,17 +20,17 @@ Once you've synced with GitHub, the folder should contain the source code for Po
 perl install.pl [abs_path]
 ```
 
-[abs_path] is the absolute path to the directory where you want PostgreSQL installed. The directory should exist before running this script.
+[abs_path] is the absolute path to the directory where you want PostgreSQL installed. The directory should exist before running this script. This will also create a folder "data" in the PostgreSQL folder; this is where the database will be located.
 
-2. Run the database server script pgstart.pl.
+2. Run the database server script pgbackend.pl.
 
 ```
 perl pgbackend.pl
 ```
 
-The install.pl script stores the install path, so there shouldn't be any need to specify it.
+The install.pl script stores the install path in a separate file, so there shouldn't be any need to specify it.
 
-3. In a second terminal, run the database interaction script dbstart.pl.
+3. In a second terminal, run the database interaction script pgfrontend.pl.
 
 ```
 perl pgfrontend.pl [db_name] [server_host]
@@ -68,7 +68,7 @@ perl clean.pl [db_name] [server_host]
 We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory.
 
 ### Recommendation Query
-In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if MovieRatings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based the rating prediceted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:
+In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if MovieRatings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based on the rating predicted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:
 
 ```
 SELECT * FROM MovieRatings R
@@ -79,18 +79,23 @@ OREDER BY R.ratingval
 LIMIT 10
 ```
 
+The available methods are ItemCosCF, ItemPearCF, UserCosCF, UserPearCF, and SVD. Note that if you do not specify which user(s) you want recommendations for, it will generate recommendations for all users, which can take an extremely long time to finish.
+
 ### Materializing Recommenders
 Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency.
 
 ```
-CREATE RECOMMENDER ON MovieRatings
+CREATE RECOMMENDER MovieRec ON MovieRatings
 USERS FROM userid
 ITEMS FROM itemsid
 EVENTS FROM ratingid
 USING ItemCosCF
+```
+Similarly, materialized recommenders can be removed with the following command:
 
 ```
-
+DROP RECOMMENDER MovieRec
+```
 
 ### Support or Contact
 Having trouble with RecDB ? contact sarwat@cs.umn.edu and we’ll help you sort it out.
