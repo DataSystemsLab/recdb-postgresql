@@ -16,5 +16,3 @@ if ($arg_length >= 2) {
 } else {
 	system "$path[0]/bin/dropdb", "-h", "localhost", "$ARGV[0]";
 }
-system "rm", "$path[0]/data/ratingtables.properties";
-system "rm", "$path[0]/data/recommenders.properties";
