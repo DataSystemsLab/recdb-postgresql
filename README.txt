@@ -6,8 +6,6 @@ $ git clone https://github.com/Sarwat/recdb-postgresql.git
 ```
 
 
-If you're using the GitHub for Mac, simply sync your repository and you'll see the new branch.
-
 ### Recommended Specifications
 
 RecDB is designed to be run on a Unix operating system. At least 1GB of RAM is recommended for most queries, though when working with very large data sets more RAM may be desirable, especially when you are not working with apriori recommenders.
