@@ -3,9 +3,10 @@
  * nodeRecjoin.c
  *	  routines to optimize joins with Recommend nodes
  *
+ * Portions Copyright (c) 2013, Data Management Lab
+ * Portions Copyright (c) 2013, University of Minnesota
  * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
- * Portions Copyright (c) 2013, University of Minnesota
  *
  *
  * IDENTIFICATION
