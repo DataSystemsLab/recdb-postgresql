@@ -2961,7 +2961,7 @@ generateItemCosModel(RecScanState *recnode) {
 	PlanState *simplanstate;
 	TupleTableSlot *simslot;
 	MemoryContext simcontext;
-printf("Starting model.\n");
+
 	attributes = (AttributeInfo*) recnode->attributes;
 	eventtable = attributes->eventtable;
 	userkey = attributes->userkey;
@@ -3026,7 +3026,7 @@ printf("Starting model.\n");
 
 	/* Query cleanup. */
 	recathon_queryEnd(simqueryDesc, simcontext);
-printf("Calculating similarities.\n");
+
 	/* Now we do the similarity calculations. Note that we
 	 * don't include duplicate entries, to save time and space.
 	 * The first item ALWAYS has a lower value than the second. */
@@ -3069,8 +3069,6 @@ printf("Calculating similarities.\n");
 	recnode->fullTotalItems = numItems;
 	recnode->fullItemList = itemIDs;
 	recnode->itemCFmodel = itemmodel;
-
-printf("Model complete.\n");
 }
 
 /* ----------------------------------------------------------------
@@ -4026,7 +4024,6 @@ prepUserForRating(RecScanState *recstate, int userID) {
 				applyItemSimGenerate(recstate);
 			else
 				applyItemSim(recstate, attributes->recModelName);
-
 			break;
 		case userCosCF:
 		case userPearCF:

@@ -12,6 +12,8 @@
  * IDENTIFICATION
  *	  src/backend/executor/nodeRecjoin.c
  *
+ * THIS CODE IS CURRENTLY NOT INCORPORATED IN RECDB.
+ *
  *-------------------------------------------------------------------------
  */
 /*
@@ -114,7 +116,7 @@ ExecRecJoin(RecJoinState *recjoin)
 	 * until we're done projecting out tuples from a join tuple.
 	 */
 	ResetExprContext(econtext);
-printf("RecJoin.\n");
+
 	/*
 	 * Ok, everything is setup for the join. We're going to get exactly one
 	 * tuple from the outer plan, because we just want to use its tupleDesc
@@ -131,7 +133,7 @@ printf("RecJoin.\n");
 		int i, userID, innerItemID, natts;
 		GenRating *findRating;
 		bool minimalTuple = false;
-printf("Point 1.\n");
+
 		/*
 		 * If we need an outer tuple, we fetch one. This creates a few
 		 * structures that we need to effectively perform a RecJoin.
@@ -139,7 +141,6 @@ printf("Point 1.\n");
 		 */
 		if (recjoin->rj_NeedNewOuter) {
 			GenRating *tempItem;
-printf("Point 2.\n");
 
 			outerTupleSlot = ExecProcNode(outerPlan);
 			/* If this happens, we're out of users. */
@@ -147,7 +148,6 @@ printf("Point 2.\n");
 				ENL1_printf("no outer tuple (out of users), ending join");
 				return NULL;
 			}
-printf("Point 3.\n");
 
 			/* Otherwise, we need to construct our hash table, since
 			 * we need info from the previous operator to do so. */
@@ -163,7 +163,6 @@ printf("Point 3.\n");
 
 				hashAdd(recjoin->itemTable,tempItem);
 			}
-printf("Point 4.\n");
 
 			/* Then we'll do some other stuff to ensure the loop
 			 * runs correctly. */
@@ -171,12 +170,10 @@ printf("Point 4.\n");
 			ENL1_printf("rescanning inner plan");
 			ExecReScan(innerPlan);
 		}
-printf("Point 5.\n");
 
 		/* We construct a new tuple on the fly. */
 		outerTupleSlot = MakeSingleTupleTableSlot(recnode->base_slot);
 		outerTupleSlot->tts_isempty = false;
-printf("Point 6.\n");
 
 		/* Mark all slots as non-empty and zero. */
 		natts = outerTupleSlot->tts_tupleDescriptor->natts;
@@ -186,7 +183,6 @@ printf("Point 6.\n");
 			outerTupleSlot->tts_isnull[i] = false;
 			outerTupleSlot->tts_nvalid++;
 		}
-printf("Point 7.\n");
 
 		/*
 		 * try to get the next inner tuple.
@@ -202,17 +198,16 @@ printf("Point 7.\n");
 		if (recjoin->innerTupleAtt < 0) {
 			for (i = 0; i < innerTupleSlot->tts_tupleDescriptor->natts; i++) {
 				char* col_name = innerTupleSlot->tts_tupleDescriptor->attrs[i]->attname.data;
-//printf("%s\n",col_name);
+
 				if (strcmp(col_name,attributes->itemkey) == 0) {
 					recjoin->innerTupleAtt = i;
 					break;
 				}
 			}
 		}
-printf("Point 7.5.\n");
+
 		if (!TupIsNull(innerTupleSlot) && innerTupleSlot->tts_mintuple)
 			minimalTuple = true;
-printf("Point 8.\n");
 
 		/* If there's no inner tuple, then we'll make a note to reset the
 		 * inner loop and get a new outer tuple. */
@@ -222,7 +217,6 @@ printf("Point 8.\n");
 			recjoin->rj_NeedNewOuter = true;
 			continue;
 		}
-printf("Point 9.\n");
 
 		/*
 		 * We now have an inner tuple and a shell of an outer tuple. We need
@@ -247,18 +241,12 @@ printf("Point 9.\n");
 			FreeTupleDesc(tempdesc);*/
 		}
 		userID = attributes->userID;
-printf("Point 10.\n");
 
 		/*
 		 * Is this item ID one of the ones we need to predict a rating for?
 		 */
-if (!recjoin->itemTable) printf("No table.\n");
-printf("innerItemID = %d\n",innerItemID);
-printf("userID = %d\n",userID);
-if (innerItemID < 0) {printf("Skipping item.\n");continue;}
 		findRating = hashFind(recjoin->itemTable,innerItemID);
 		if (!findRating) continue;
-printf("Point 11.\n");
 
 		/*
 		 * We're ok to construct a tuple at this point.
@@ -269,7 +257,6 @@ printf("Point 11.\n");
 		outerTupleSlot->tts_isnull[recnode->itematt] = false;
 
 		econtext->ecxt_outertuple = outerTupleSlot;
-printf("Point 12.\n");
 
 		/*
 		 * at this point we have a new pair of inner and outer tuples so we
@@ -284,7 +271,6 @@ printf("Point 12.\n");
 		if (ExecQual(joinqual, econtext, false))
 		{
 			node->nl_MatchedOuter = true;
-printf("Point 13.\n");
 
 			/* In an antijoin, we never return a matched tuple */
 			if (node->js.jointype == JOIN_ANTI)
@@ -292,7 +278,6 @@ printf("Point 13.\n");
 				node->nl_NeedNewOuter = true;
 				continue;		/* return to top of loop */
 			}
-printf("Point 14.\n");
 
 			/*
 			 * In a semijoin, we'll consider returning the first match, but
@@ -300,7 +285,6 @@ printf("Point 14.\n");
 			 */
 			if (node->js.jointype == JOIN_SEMI)
 				node->nl_NeedNewOuter = true;
-printf("Point 15.\n");
 
 			if (otherqual == NIL || ExecQual(otherqual, econtext, false))
 			{
@@ -310,7 +294,6 @@ printf("Point 15.\n");
 				 */
 				TupleTableSlot *result;
 				ExprDoneCond isDone;
-printf("Point 16.\n");
 
 				/*
 				 * The tuples match our qualifications. We now apply
@@ -319,12 +302,10 @@ printf("Point 16.\n");
  				 */
 				int itemindex = binarySearch(recnode->fullItemList, innerItemID, 0, recnode->fullTotalItems);
 				applyRecScore(recnode, outerTupleSlot, innerItemID, itemindex);
-printf("Point 17.\n");
 
 				ENL1_printf("qualification succeeded, projecting tuple");
 
 				result = ExecProject(node->js.ps.ps_ProjInfo, &isDone);
-printf("Point 18.\n");
 
 				if (isDone != ExprEndResult)
 				{
@@ -343,7 +324,6 @@ printf("Point 18.\n");
 		 * Tuple fails qual, so free per-tuple memory and try again.
 		 */
 		ResetExprContext(econtext);
-printf("Point 19.\n");
 
 		ENL1_printf("qualification failed, looping");
 	}
@@ -356,8 +336,6 @@ printf("Point 19.\n");
 RecJoinState *
 ExecInitRecJoin(RecJoin *node, EState *estate, int eflags)
 {
-	int i;
-	GenRating *tempItem;
 	RecJoinState *rjstate;
 
 	rjstate = makeNode(RecJoinState);

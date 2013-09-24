@@ -477,12 +477,13 @@ ExecFilterRecommend(RecScanState *recnode,
 			}
 
 			/* If we get here, then we found a user who will be actually
-			 * returned in the results. */
+			 * returned in the results. One quick reset here. */
+			recnode->fullItemNum = 0;
 		}
 
 		/* Mark the user ID and index. */
 		attributes->userID = userID;
-		recnode->userindex = recnode->userNum;
+		recnode->userindex = userindex;
 
 		/* With the user ID determined, we need to investigate and see
 		 * if this is a new user. If so, attempt to create prediction
@@ -495,9 +496,13 @@ ExecFilterRecommend(RecScanState *recnode,
 
 		/* Now replace the item ID, if the user is valid. Otherwise,
 		 * leave the item ID as is, as it doesn't matter what it is. */
-		itemindex = recnode->itemNum;
 		if (recnode->validUser)
-			itemID = recnode->itemList[itemindex];
+			itemID = recnode->itemList[recnode->itemNum];
+		while (recnode->fullItemList[recnode->fullItemNum] < itemID)
+			recnode->fullItemNum++;
+		itemindex = recnode->fullItemNum;
+		if (recnode->fullItemList[itemindex] > itemID)
+			elog(ERROR, "critical item mismatch in ExecRecommend");
 
 		/* Plug in the data, marking those columns full. We also need to
 		 * mark the rating column with something temporary. */
@@ -524,6 +529,7 @@ ExecFilterRecommend(RecScanState *recnode,
 			recnode->userNum++;
 			recnode->newUser = true;
 			recnode->itemNum = 0;
+			recnode->fullItemNum = 0;
 			if (recnode->userNum >= recnode->totalUsers)
 				recnode->finished = true;
 		}
@@ -974,10 +980,6 @@ ExecRecScan(RecScanState *node)
 void
 ExecEndRecScan(RecScanState *node)
 {
-	AttributeInfo* attributes;
-
-	attributes = (AttributeInfo*) node->attributes;
-
 	/* End the normal scan. */
 	switch(nodeTag(node->subscan)) {
 		case T_SeqScanState:
@@ -992,6 +994,8 @@ ExecEndRecScan(RecScanState *node)
 	/* Now for extra stuff. */
 	if (node->itemList)
 		pfree(node->itemList);
+	if (node->fullItemList)
+		pfree(node->fullItemList);
 	if (node->userFeatures)
 		pfree(node->userFeatures);
 	if (node->base_slot)

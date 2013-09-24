@@ -35,8 +35,8 @@ static void modifyColumnRef(ColumnRef *attribute, char *recname, char *viewname)
 static void modifyFrom(SelectStmt *stmt, RecommendInfo *recInfo);
 static void filterfirst(Node *whereExpr, RecommendInfo *recInfo);
 static bool filterfirstrecurse(Node *whereExpr, RecommendInfo *recInfo);
-static void applyRecJoin(Node *whereClause, List *fromClause, RecommendInfo *recInfo);
-static RangeVar* locateJoinTable(Node* recExpr, List *fromClause, RangeVar* eventtable, char* key);
+//static void applyRecJoin(Node *whereClause, List *fromClause, RecommendInfo *recInfo);
+//static RangeVar* locateJoinTable(Node* recExpr, List *fromClause, RangeVar* eventtable, char* key);
 static bool tableMatch(RangeVar* table, char* tablename);
 
 /*
@@ -687,8 +687,9 @@ filterfirstrecurse(Node *whereExpr, RecommendInfo *recInfo) {
 /*
  * applyRecJoin -
  *	  A function to determine if we need to employ a RecJoin.
+ *	  CURRENTLY NOT IN USE.
  */
-static void
+/*static void
 applyRecJoin(Node *whereClause, List *fromClause, RecommendInfo *recInfo) {
 	RangeVar *partnerTable;
 	AttributeInfo *attributes = recInfo->attributes;
@@ -705,19 +706,10 @@ applyRecJoin(Node *whereClause, List *fromClause, RecommendInfo *recInfo) {
 	if (!partnerTable)
 		partnerTable = locateJoinTable(whereClause, fromClause,
 					recInfo->recommender, attributes->userkey);
-//	else
-//		ereport(ERROR,
-//		(errcode(ERRCODE_SYNTAX_ERROR),
-//		 errmsg("found item ID match")));
-
 
 	// If we found no such table, give up.
 	if (!partnerTable)
 		return;
-//	else
-//		ereport(ERROR,
-//		(errcode(ERRCODE_SYNTAX_ERROR),
-//		 errmsg("found user ID match")));
 
 	// Otherwise, we found an appropriate table. Make a note.
 	recInfo->opType = OP_JOIN;
@@ -726,7 +718,7 @@ applyRecJoin(Node *whereClause, List *fromClause, RecommendInfo *recInfo) {
 	partnerInfo = makeNode(RecommendInfo);
 	partnerInfo->opType = OP_JOINPARTNER;
 	partnerTable->recommender = partnerInfo;
-}
+}*/
 
 
 /*
@@ -734,15 +726,16 @@ applyRecJoin(Node *whereClause, List *fromClause, RecommendInfo *recInfo) {
  *	  A function to search through the WHERE clause and see if we are
  *	  joining our recommender with some other table, either by item ID
  *	  or user ID. We give preference to item ID.
+ *	  CURRENTLY NOT IN USE.
  */
-static RangeVar*
+/*static RangeVar*
 locateJoinTable(Node* recExpr, List *fromClause, RangeVar* eventtable, char* key) {
 	A_Expr *recAExpr;
 
 	if (!recExpr)
 		return NULL;
 
-	/* Turns out this isn't necessarily an A_Expr. */
+	// Turns out this isn't necessarily an A_Expr.
 	if (nodeTag(recExpr) != T_A_Expr)
 		return NULL;
 
@@ -835,7 +828,7 @@ locateJoinTable(Node* recExpr, List *fromClause, RangeVar* eventtable, char* key
 
 	// All other kinds fail, at least for now.
 	return NULL;
-}
+}*/
 
 /*
  * tableMatch -

@@ -14,9 +14,9 @@ create index itemrating_index on ratings(itemid);
 
 set client_encoding = LATIN1;
 
-COPY users(userid,gender,age,job,zipcode) from '/home/administrator/javery/recdb-postgresql/PostgreSQL/moviedata/MovieLens1M/users.dat' DELIMITERS ';';
-COPY items(itemid,name,genre) from '/home/administrator/javery/recdb-postgresql/PostgreSQL/moviedata/MovieLens1M/movies.dat' DELIMITERS ';';
-COPY ratings(userid,itemid,ratingval,ratingts) from '/home/administrator/javery/recdb-postgresql/PostgreSQL/moviedata/MovieLens1M/ratings.dat' DELIMITERS ';';
+COPY users(userid,gender,age,job,zipcode) from '/home/jim/RecDBnew/recdb-postgresql/PostgreSQL/moviedata/MovieLens1M/users.dat' DELIMITERS ';';
+COPY items(itemid,name,genre) from '/home/jim/RecDBnew/recdb-postgresql/PostgreSQL/moviedata/MovieLens1M/movies.dat' DELIMITERS ';';
+COPY ratings(userid,itemid,ratingval,ratingts) from '/home/jim/RecDBnew/recdb-postgresql/PostgreSQL/moviedata/MovieLens1M/ratings.dat' DELIMITERS ';';
 
 CREATE TABLE recathonheavyusers (userid integer primary key);
 insert into recathonheavyusers select t.userid from (select userid,count(*) as rating from ratings group by userid order by rating desc) t limit 100;
