@@ -110,7 +110,7 @@ DROP RECOMMENDER MovieRec
 ```
 
 ### More Complex Queries
-The main benefit of implementation the recommendation functionality inside a database enine (PostgreSQL) is to allow for integration with traditional database operations, e.g., selection, projection, join. 
+The main benefit of implementing the recommendation functionality inside a database enine (PostgreSQL) is to allow for integration with traditional database operations, e.g., selection, projection, join. 
 For example, the following query recommends the top 10 Comedy movies to user 1. 
 In order to do that, the query joins the recommendation with the Movies table and apply a filter on the movies genre column (genre LIKE '%Comedy%').
 
