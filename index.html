@@ -1,36 +1,33 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-
   <head>
-    <meta charset='utf-8' />
-    <meta http-equiv="X-UA-Compatible" content="chrome=1" />
-    <meta name="description" content="Recdb-postgresql : RecDB is a recommendation engine built entirely inside PostgreSQL 9.2" />
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Recdb-postgresql by Sarwat</title>
 
-    <link rel="stylesheet" type="text/css" media="screen" href="stylesheets/stylesheet.css">
-
-    <title>Recdb-postgresql</title>
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/pygment_trac.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
   </head>
-
   <body>
+    <div class="wrapper">
+      <header>
+        <h1>Recdb-postgresql</h1>
+        <p>RecDB is a recommendation engine built entirely inside PostgreSQL 9.2</p>
 
-    <!-- HEADER -->
-    <div id="header_wrap" class="outer">
-        <header class="inner">
-          <a id="forkme_banner" href="https://github.com/Sarwat/recdb-postgresql">View on GitHub</a>
+        <p class="view"><a href="https://github.com/Sarwat/recdb-postgresql">View the Project on GitHub <small>Sarwat/recdb-postgresql</small></a></p>
 
-          <h1 id="project_title">Recdb-postgresql</h1>
-          <h2 id="project_tagline">RecDB is a recommendation engine built entirely inside PostgreSQL 9.2</h2>
 
-            <section id="downloads">
-              <a class="zip_download_link" href="https://github.com/Sarwat/recdb-postgresql/zipball/master">Download this project as a .zip file</a>
-              <a class="tar_download_link" href="https://github.com/Sarwat/recdb-postgresql/tarball/master">Download this project as a tar.gz file</a>
-            </section>
-        </header>
-    </div>
-
-    <!-- MAIN CONTENT -->
-    <div id="main_content_wrap" class="outer">
-      <section id="main_content" class="inner">
+        <ul>
+          <li><a href="https://github.com/Sarwat/recdb-postgresql/zipball/master">Download <strong>ZIP File</strong></a></li>
+          <li><a href="https://github.com/Sarwat/recdb-postgresql/tarball/master">Download <strong>TAR Ball</strong></a></li>
+          <li><a href="https://github.com/Sarwat/recdb-postgresql">View On <strong>GitHub</strong></a></li>
+        </ul>
+      </header>
+      <section>
         <h1>
 <a name="welcome-to-recdb" class="anchor" href="#welcome-to-recdb"><span class="octicon octicon-link"></span></a>Welcome to RecDB.</h1>
 
@@ -142,7 +139,7 @@ USING ItemCosCF
 <h3>
 <a name="more-complex-queries" class="anchor" href="#more-complex-queries"><span class="octicon octicon-link"></span></a>More Complex Queries</h3>
 
-<p>The main benefit of implementation the recommendation functionality inside a database enine (PostgreSQL) is to allow for integration with traditional database operations, e.g., selection, projection, join. 
+<p>The main benefit of implementing the recommendation functionality inside a database enine (PostgreSQL) is to allow for integration with traditional database operations, e.g., selection, projection, join. 
 For example, the following query recommends the top 10 Comedy movies to user 1. 
 In order to do that, the query joins the recommendation with the Movies table and apply a filter on the movies genre column (genre LIKE '%Comedy%').</p>
 
@@ -159,17 +156,12 @@ LIMIT 10
 
 <p>Having trouble with RecDB ? contact <a href="mailto:sarwat@cs.umn.edu">sarwat@cs.umn.edu</a> and we’ll help you sort it out.</p>
       </section>
-    </div>
-
-    <!-- FOOTER  -->
-    <div id="footer_wrap" class="outer">
-      <footer class="inner">
-        <p class="copyright">Recdb-postgresql maintained by <a href="https://github.com/Sarwat">Sarwat</a></p>
-        <p>Published with <a href="http://pages.github.com">GitHub Pages</a></p>
+      <footer>
+        <p>This project is maintained by <a href="https://github.com/Sarwat">Sarwat</a></p>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
       </footer>
     </div>
-
+    <script src="javascripts/scale.fix.js"></script>
     
-
   </body>
 </html>
