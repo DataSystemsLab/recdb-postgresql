@@ -79,7 +79,15 @@ ORDER BY R.ratingval
 LIMIT 10
 ```
 
-The available methods are ItemCosCF, ItemPearCF, UserCosCF, UserPearCF, and SVD. Note that if you do not specify which user(s) you want recommendations for, it will generate recommendations for all users, which can take an extremely long time to finish.
+Currently, the available recommendation algorithms that could be passed to the USING clause are the following:
+
+ItemCosCF: Item-Item Collaborative Filtering using Cosine Similarity measure.
+ItemPearCF: Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.
+UserCosCF: User-User Collaborative Filtering using Cosine Similarity measure. 
+UserPearCF: User-User Collaborative Filtering using Cosine Similarity measure. 
+SVD: Simon Funk Singular Value Decomposition. 
+
+Note that if you do not specify which user(s) you want recommendations for, it will generate recommendations for all users, which can take an extremely long time to finish.
 
 ### Materializing Recommenders
 Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency.
