@@ -109,7 +109,7 @@ Similarly, materialized recommenders can be removed with the following command:
 DROP RECOMMENDER MovieRec
 ```
 
-### More Comples Queries
+### More Complex Queries
 The main benefit of implementation the recommendation functionality inside a database enine (PostgreSQL) is to allow for integration with traditional database operations, e.g., selection, projection, join. 
 For example, the following query recommends the top 10 Comedy movies to user 1. 
 In order to do that, the query joins the recommendation with the Movies table and apply a filter on the movies genre column (genre LIKE '%Comedy%').
