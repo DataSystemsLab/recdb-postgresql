@@ -1,4 +1,4 @@
-﻿### Welcome to RecDB.
+﻿# Welcome to RecDB.
 An Open Source Recommendation Engine Built Entirely Inside PostgreSQL 9.2. RecDB allows application developers to build recommendation applications in a heartbeat through a wide variety of built-in recommendation algorithms like user-user collaborative filtering, item-item collaborative filtering, singular value decomposition. Applications powered by RecDB can produce online and flexible personalized recommendations to end-users. You can check out the code, as follows:
 
 ```
@@ -79,7 +79,19 @@ ORDER BY R.ratingval
 LIMIT 10
 ```
 
-The available methods are ItemCosCF, ItemPearCF, UserCosCF, UserPearCF, and SVD. Note that if you do not specify which user(s) you want recommendations for, it will generate recommendations for all users, which can take an extremely long time to finish.
+Currently, the available recommendation algorithms that could be passed to the USING clause are the following:
+
+ItemCosCF: Item-Item Collaborative Filtering using Cosine Similarity measure.
+
+ItemPearCF: Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.
+
+UserCosCF: User-User Collaborative Filtering using Cosine Similarity measure. 
+
+UserPearCF: User-User Collaborative Filtering using Cosine Similarity measure. 
+
+SVD: Simon Funk Singular Value Decomposition. 
+
+Note that if you do not specify which user(s) you want recommendations for, it will generate recommendations for all users, which can take an extremely long time to finish.
 
 ### Materializing Recommenders
 Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency.
@@ -96,6 +108,23 @@ Similarly, materialized recommenders can be removed with the following command:
 ```
 DROP RECOMMENDER MovieRec
 ```
+
+### More Complex Queries
+The main benefit of implementing the recommendation functionality inside a database enine (PostgreSQL) is to allow for integration with traditional database operations, e.g., selection, projection, join. 
+For example, the following query recommends the top 10 Comedy movies to user 1. 
+In order to do that, the query joins the recommendation with the Movies table and apply a filter on the movies genre column (genre LIKE '%Comedy%').
+
+
+```
+SELECT * FROM MovieRatings R, Movies M
+RECOMMEND R.itemid TO R.userid ON R.ratingval
+USING ItemCosCF
+WHERE R.userid = 1 AND M.movieid = R.itemid AND M.genre LIKE '%Comedy%'
+ORDER BY R.ratingval
+LIMIT 10
+```
+
+
 
 ### Support or Contact
 Having trouble with RecDB ? contact sarwat@cs.umn.edu and we’ll help you sort it out.

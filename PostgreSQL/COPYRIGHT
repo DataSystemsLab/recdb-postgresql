@@ -1,5 +1,6 @@
-PostgreSQL Database Management System
-(formerly known as Postgres, then as Postgres95)
+RecDB: A Recommendation Engine Built Entirely Inside PostgreSQL 9.2
+
+Portions Copyright (c) 2013, Data Management Lab University of Minnesota
 
 Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
 
