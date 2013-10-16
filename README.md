@@ -1,4 +1,4 @@
-﻿# Welcome to RecDB.
+﻿# Welcome to RecDB
 An Open Source Recommendation Engine Built Entirely Inside PostgreSQL 9.2. RecDB allows application developers to build recommendation applications in a heartbeat through a wide variety of built-in recommendation algorithms like user-user collaborative filtering, item-item collaborative filtering, singular value decomposition. Applications powered by RecDB can produce online and flexible personalized recommendations to end-users. You can check out the code, as follows:
 
 ```
@@ -6,7 +6,7 @@ $ git clone https://github.com/Sarwat/recdb-postgresql.git
 ```
 
 
-### Recommended Specifications
+## Recommended Specifications
 
 RecDB is designed to be run on a Unix operating system. At least 1GB of RAM is recommended for most queries, though when working with very large data sets more RAM may be desirable, especially when you are not working with apriori recommenders.
 
@@ -63,6 +63,7 @@ If you ever want to eliminate the current database , use the clean.pl script.
 perl clean.pl [db_name] [server_host]
 ```
 
+## How It Works
 
 ### Loading Data
 We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory.
@@ -124,7 +125,12 @@ ORDER BY R.ratingval
 LIMIT 10
 ```
 
+## Authors
+Mohamed Sarwat
 
+James Avery
 
-### Support or Contact
+Mohamed F. Mokbel
+
+## Support or Contact
 Having trouble with RecDB ? contact sarwat@cs.umn.edu and we’ll help you sort it out.
