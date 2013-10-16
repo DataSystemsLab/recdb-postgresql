@@ -126,11 +126,11 @@ LIMIT 10
 ```
 
 ## Authors
-Mohamed Sarwat
+Mohamed Sarwat <http://www-users.cs.umn.edu/~sarwat/>
 
 James Avery
 
-Mohamed F. Mokbel
+Mohamed F. Mokbel <http://www-users.cs.umn.edu/~mokbel/>
 
 ## Support or Contact
 Having trouble with RecDB ? contact sarwat@cs.umn.edu and we’ll help you sort it out.
