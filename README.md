@@ -79,6 +79,8 @@ ORDER BY R.ratingval
 LIMIT 10
 ```
 
+When you issue a query such as this, the only interesting data will come from the three columns specified in the RECOMMEND clause. Any other columns that exist in the specified ratings tables will be set to 0.
+
 Currently, the available recommendation algorithms that could be passed to the USING clause are the following:
 
 ItemCosCF: Item-Item Collaborative Filtering using Cosine Similarity measure.
@@ -100,7 +102,7 @@ Users may create recommenders apriori so that when a recommendation query is iss
 CREATE RECOMMENDER MovieRec ON MovieRatings
 USERS FROM userid
 ITEMS FROM itemid
-EVENTS FROM ratingid
+EVENTS FROM ratingval
 USING ItemCosCF
 ```
 Similarly, materialized recommenders can be removed with the following command:
@@ -108,6 +110,8 @@ Similarly, materialized recommenders can be removed with the following command:
 ```
 DROP RECOMMENDER MovieRec
 ```
+
+Note that if you query a materialized recommender, the three columns listed above will be the only ones returned, and attempting to reference any additional columns will result in an error.
 
 ### More Complex Queries
 The main benefit of implementing the recommendation functionality inside a database enine (PostgreSQL) is to allow for integration with traditional database operations, e.g., selection, projection, join. 
