@@ -108,6 +108,8 @@ ORDER BY R.ratingval
 LIMIT 10
 </code></pre>
 
+<p>When you issue a query such as this, the only interesting data will come from the three columns specified in the RECOMMEND clause. Any other columns that exist in the specified ratings tables will be set to 0.</p>
+
 <p>Currently, the available recommendation algorithms that could be passed to the USING clause are the following:</p>
 
 <p>ItemCosCF: Item-Item Collaborative Filtering using Cosine Similarity measure.</p>
@@ -130,7 +132,7 @@ LIMIT 10
 <pre><code>CREATE RECOMMENDER MovieRec ON MovieRatings
 USERS FROM userid
 ITEMS FROM itemid
-EVENTS FROM ratingid
+EVENTS FROM ratingval
 USING ItemCosCF
 </code></pre>
 
@@ -138,6 +140,8 @@ USING ItemCosCF
 
 <pre><code>DROP RECOMMENDER MovieRec
 </code></pre>
+
+<p>Note that if you query a materialized recommender, the three columns listed above will be the only ones returned, and attempting to reference any additional columns will result in an error.</p>
 
 <h3>
 <a name="more-complex-queries" class="anchor" href="#more-complex-queries"><span class="octicon octicon-link"></span></a>More Complex Queries</h3>
