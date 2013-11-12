@@ -84,15 +84,15 @@ When you issue a query such as this, the only interesting data will come from th
 
 Currently, the available recommendation algorithms that could be passed to the USING clause are the following:
 
-ItemCosCF: Item-Item Collaborative Filtering using Cosine Similarity measure.
+```ItemCosCF``` Item-Item Collaborative Filtering using Cosine Similarity measure.
 
-ItemPearCF: Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.
+```ItemPearCF``` Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.
 
-UserCosCF: User-User Collaborative Filtering using Cosine Similarity measure. 
+```UserCosCF``` User-User Collaborative Filtering using Cosine Similarity measure. 
 
-UserPearCF: User-User Collaborative Filtering using Cosine Similarity measure. 
+```UserPearCF``` User-User Collaborative Filtering using Cosine Similarity measure. 
 
-SVD: Simon Funk Singular Value Decomposition. 
+```SVD``` Simon Funk Singular Value Decomposition. 
 
 Note that if you do not specify which user(s) you want recommendations for, it will generate recommendations for all users, which can take an extremely long time to finish.
 
