@@ -1531,7 +1531,7 @@ subquery_is_pushdown_safe(Query *subquery, Query *topquery,
 		return false;
 
 	/* Check point 3 (new for Recathon) */
-	if (subquery->isRecommendStmt)
+	if (subquery->recommendStmt)
 		return false;
 
 	/* Are we at top level, or looking at a setop component? */

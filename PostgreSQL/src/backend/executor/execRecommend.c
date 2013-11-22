@@ -305,7 +305,7 @@ ExecFilterRecommend(RecScanState *recnode,
 					 ExecScanRecheckMtd recheckMtd)
 {
 	ExprContext *econtext;
-	List	   *qual;
+	List	   *qual, *userqual;
 	ProjectionInfo *projInfo;
 	ExprDoneCond isDone;
 	TupleTableSlot *resultSlot;
@@ -319,6 +319,7 @@ ExecFilterRecommend(RecScanState *recnode,
 	 * Fetch data from node
 	 */
 	qual = node->ps.qual;
+	userqual = recnode->userqual;
 	projInfo = node->ps.ps_ProjInfo;
 	econtext = node->ps.ps_ExprContext;
 
@@ -373,7 +374,7 @@ ExecFilterRecommend(RecScanState *recnode,
 		if (recnode->finished) {
 			recnode->finished = false;
 			recnode->userNum = 0;
-			recnode->itemNum = 0;
+			recnode->fullItemNum = 0;
 			return NULL;
 		}
 
@@ -434,51 +435,36 @@ ExecFilterRecommend(RecScanState *recnode,
 
 		/*
 		 * We now have a blank tuple slot that we need to fill with data.
-		 * We have a working user ID, but not a valid item list. We'd like to
-		 * use the filter to determine if this is a good user, but we can't
-		 * do that without an item, in many cases. The solution is to add in
-		 * dummy items, then compare it against the filter. If a given user ID
-		 * doesn't make it past the filter with any item ID, then that user is
-		 * being filtered out, and we'll move on to the next.
+		 * We have a working user ID, but not a valid item list. This is where
+		 * we use our custom user-focused WHERE clause to filter out users that
+		 * do not pass our qualifications.
 		 */
 		if (recnode->newUser) {
-			recnode->fullItemNum = 0;
-			itemindex = recnode->fullItemNum;
-			itemID = recnode->fullItemList[itemindex];
-
 			slot->tts_values[recnode->useratt] = Int32GetDatum(userID);
-			slot->tts_values[recnode->itematt] = Int32GetDatum(itemID);
+			slot->tts_values[recnode->itematt] = Int32GetDatum(-1);
 			slot->tts_values[recnode->eventatt] = Int32GetDatum(-1);
 
 			/* We have a preliminary slot - let's test it. */
-			while (qual && !ExecQual(qual, econtext, false)) {
-				/* We failed the test. Try the next item. */
-				recnode->fullItemNum++;
-				if (recnode->fullItemNum >= recnode->fullTotalItems) {
-					/* If we've reached the last item, move onto the next user.
-					 * If we've reached the last user, we're done. */
-					InstrCountFiltered1(node, recnode->fullTotalItems);
-					recnode->userNum++;
-					recnode->newUser = true;
+			while (userqual && !ExecQual(userqual, econtext, false)) {
+				/* We failed the test. Try the next user.
+				 * If we've reached the last user, we're done. */
+				InstrCountFiltered1(node, recnode->fullTotalItems);
+				recnode->userNum++;
+				recnode->newUser = true;
+
+				if (recnode->userNum >= recnode->totalUsers) {
+					recnode->userNum = 0;
 					recnode->fullItemNum = 0;
-					if (recnode->userNum >= recnode->totalUsers) {
-						recnode->userNum = 0;
-						recnode->itemNum = 0;
-						return NULL;
-					}
-					userindex = recnode->userNum;
-					userID = recnode->userList[userindex];
+					return NULL;
 				}
 
-				itemindex = recnode->fullItemNum;
-				itemID = recnode->fullItemList[itemindex];
+				userindex = recnode->userNum;
+				userID = recnode->userList[userindex];
 				slot->tts_values[recnode->useratt] = Int32GetDatum(userID);
-				slot->tts_values[recnode->itematt] = Int32GetDatum(itemID);
 			}
 
 			/* If we get here, then we found a user who will be actually
-			 * returned in the results. One quick reset here. */
-			recnode->fullItemNum = 0;
+			 * returned in the results. */
 		}
 
 		/* Mark the user ID and index. */
@@ -495,14 +481,26 @@ ExecFilterRecommend(RecScanState *recnode,
 		}
 
 		/* Now replace the item ID, if the user is valid. Otherwise,
-		 * leave the item ID as is, as it doesn't matter what it is. */
-		if (recnode->validUser)
+		 * leave the item ID as is, as it doesn't matter what it is. We'll
+		 * move on to the next user, as well. */
+		if (recnode->validUser) {
+			itemID = recnode->fullItemList[recnode->fullItemNum];
+			itemindex = recnode->fullItemNum;
+		} else {
+			recnode->userNum++;
+			recnode->newUser = true;
+			recnode->fullItemNum = 0;
+			if (recnode->userNum >= recnode->totalUsers)
+				recnode->finished = true;
+			continue;
+		}
+/*		if (recnode->validUser)
 			itemID = recnode->itemList[recnode->itemNum];
 		while (recnode->fullItemList[recnode->fullItemNum] < itemID)
 			recnode->fullItemNum++;
 		itemindex = recnode->fullItemNum;
 		if (recnode->fullItemList[itemindex] > itemID)
-			elog(ERROR, "critical item mismatch in ExecRecommend");
+			elog(ERROR, "critical item mismatch in ExecRecommend");*/
 
 		/* Plug in the data, marking those columns full. We also need to
 		 * mark the rating column with something temporary. */
@@ -514,21 +512,20 @@ ExecFilterRecommend(RecScanState *recnode,
 		 * If that's the case, we need to calculate it before we do the
 		 * qual filtering. Also, if we're doing a JoinRecommend, we should
 		 * not calculate the RecScore in this node. In the current version
-		 * of RecDB, an OP_NOFILTER shouldn't be allowed. */
-		if (attributes->opType == OP_NOFILTER)
+		 * of RecDB, special joins don't exist, so that's no problem. */
+		if (attributes->noFilter)
 			applyRecScore(recnode, slot, itemID, itemindex);
 
 		/* Move onto the next item, for next time. If we're doing a RecJoin,
 		 * though, we'll move onto the next user instead. */
-		recnode->itemNum++;
-		if (recnode->itemNum >= recnode->totalItems ||
+		recnode->fullItemNum++;
+		if (recnode->fullItemNum >= recnode->fullTotalItems ||
 			attributes->opType == OP_JOIN ||
 			attributes->opType == OP_GENERATEJOIN) {
 			/* If we've reached the last item, move onto the next user.
 			 * If we've reached the last user, we're done. */
 			recnode->userNum++;
 			recnode->newUser = true;
-			recnode->itemNum = 0;
 			recnode->fullItemNum = 0;
 			if (recnode->userNum >= recnode->totalUsers)
 				recnode->finished = true;
@@ -558,7 +555,7 @@ ExecFilterRecommend(RecScanState *recnode,
 			 * Found a satisfactory scan tuple. This is usually when
 			 * we will calculate and apply the RecScore.
 			 */
-			if (attributes->opType == OP_FILTER || attributes->opType == OP_GENERATE)
+			if (!attributes->noFilter)
 				applyRecScore(recnode, slot, itemID, itemindex);
 
 			if (projInfo)
@@ -701,18 +698,16 @@ InitializeRecommender(RecScanState *recstate) {
 		recstate->totalUsers = getTupleInt(hslot,"count");
 		recathon_queryEnd(queryDesc,recathoncontext);
 
-		/* In the event that there are no user IDs, our ratings table is empty, so
-		 * we can't do anything. */
+		/* In the event that there are no user IDs, we can't do anything. */
 		if (recstate->totalUsers <= 0)
-			elog(ERROR, "no ratings in table %s, cannot predict ratings",
-				attributes->eventtable);
+			elog(ERROR, "no users found, cannot predict ratings");
 
 		recstate->userList = (int*) palloc(recstate->totalUsers*sizeof(int));
 		recstate->userNum = 0;
 
 		/* Now for the actual query. */
-		sprintf(querystring,"select distinct %s from %s order by %s;",
-			attributes->userkey,attributes->eventtable,attributes->userkey);
+		sprintf(querystring,"select distinct %s from %s;",
+			attributes->userkey,attributes->eventtable);
 		queryDesc = recathon_queryStart(querystring,&recathoncontext);
 		planstate = queryDesc->planstate;
 
@@ -734,16 +729,14 @@ InitializeRecommender(RecScanState *recstate) {
 		/* Quick error protection. */
 		recstate->totalUsers = i;
 		if (recstate->totalUsers <= 0)
-			elog(ERROR, "no ratings in table %s, cannot predict ratings",
-				attributes->eventtable);
+			elog(ERROR, "no users found, cannot predict ratings");
 
 		/* Lastly, initialize the attributes->userID. */
 		attributes->userID = recstate->userList[0] - 1;
 	}
 
-	/* Next, for annoying and convoluted reasons, we need a full list of all the
-	 * items in the rating table. This will help us circumvent some filter issues
-	 * while remaining as efficient as we can manage. */
+	/* Next, we need a full list of all the items in the rating table. This will tell
+	 * us what items to generate ratings for. */
 	if ((attributes->opType != OP_GENERATE && attributes->opType != OP_GENERATEJOIN) ||
 	    attributes->method == userCosCF ||
 	    attributes->method == userPearCF) {
@@ -755,11 +748,9 @@ InitializeRecommender(RecScanState *recstate) {
 		recstate->fullTotalItems = getTupleInt(hslot,"count");
 		recathon_queryEnd(queryDesc,recathoncontext);
 
-		/* In the event that there are no item IDs, our ratings table is empty, so
-		 * we can't do anything. */
+		/* In the event that there are no item IDs, we can't do anything. */
 		if (recstate->fullTotalItems <= 0)
-			elog(ERROR, "no ratings in table %s, cannot predict ratings",
-				attributes->eventtable);
+			elog(ERROR, "no items found, cannot predict ratings");
 
 		recstate->fullItemList = (int*) palloc(recstate->fullTotalItems*sizeof(int));
 		recstate->fullItemNum = 0;
@@ -788,8 +779,7 @@ InitializeRecommender(RecScanState *recstate) {
 		/* Quick error protection. */
 		recstate->fullTotalItems = i;
 		if (recstate->fullTotalItems <= 0)
-			elog(ERROR, "no ratings in table %s, cannot predict ratings",
-				attributes->eventtable);
+			elog(ERROR, "no items found, cannot predict ratings");
 	}
 
 	recstate->finished = false;
@@ -803,7 +793,6 @@ InitializeRecommender(RecScanState *recstate) {
 	recstate->ratedTable = NULL;
 	recstate->pendingTable = NULL;
 	recstate->simTable = NULL;
-	recstate->itemList = NULL;
 	recstate->userFeatures = NULL;
 
 	/* In case we don't have a pre-built recommender, we need to assemble
@@ -903,6 +892,10 @@ ExecInitRecScan(RecScan *node, EState *estate, int eflags)
 	 * stuff out of Init and into Execute, to make EXPLAIN go faster. */
 	recstate->initialized = false;
 
+	/* Next we need to prep our user WHERE clause. */
+	recstate->userqual = (List *)
+		ExecInitExpr((Expr *) attributes->userWhereClause, NULL);
+
 	/* Code for a future version of RecDB. */
 /*	switch(attributes->cellType) {
 		case CELL_ALPHA:
@@ -992,8 +985,6 @@ ExecEndRecScan(RecScanState *node)
 	}
 
 	/* Now for extra stuff. */
-	if (node->itemList)
-		pfree(node->itemList);
 	if (node->fullItemList)
 		pfree(node->fullItemList);
 	if (node->userFeatures)

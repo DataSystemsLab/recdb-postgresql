@@ -1016,6 +1016,7 @@ _copyRangeVar(const RangeVar *from)
 	COPY_SCALAR_FIELD(relpersistence);
 	COPY_NODE_FIELD(alias);
 	COPY_LOCATION_FIELD(location);
+	COPY_NODE_FIELD(recommender);
 
 	return newnode;
 }
@@ -2422,7 +2423,7 @@ _copyQuery(const Query *from)
 	COPY_SCALAR_FIELD(hasRecursive);
 	COPY_SCALAR_FIELD(hasModifyingCTE);
 	COPY_SCALAR_FIELD(hasForUpdate);
-	COPY_SCALAR_FIELD(isRecommendStmt);
+	COPY_NODE_FIELD(recommendStmt);
 	COPY_NODE_FIELD(cteList);
 	COPY_NODE_FIELD(rtable);
 	COPY_NODE_FIELD(jointree);
@@ -2525,7 +2526,6 @@ _copyRecommendInfo(const RecommendInfo *from)
 	COPY_NODE_FIELD(recommender);
 	COPY_NODE_FIELD(attributes);
 	COPY_SCALAR_FIELD(opType);
-	COPY_NODE_FIELD(next);
 
 	return newnode;
 }
@@ -2548,13 +2548,11 @@ _copyAttributeInfo(const AttributeInfo *from)
 	COPY_STRING_FIELD(recModelName);
 	COPY_STRING_FIELD(recModelName2);
 	COPY_STRING_FIELD(recViewName);
-	COPY_SCALAR_FIELD(numAtts);
-	COPY_POINTER_FIELD(attNames, from->numAtts*sizeof(char*));
-	COPY_POINTER_FIELD(attValues, from->numAtts*sizeof(char*));
-	COPY_NODE_FIELD(target_val);
+	COPY_NODE_FIELD(userWhereClause);
 	COPY_SCALAR_FIELD(IDfound);
 	COPY_SCALAR_FIELD(cellType);
 	COPY_SCALAR_FIELD(opType);
+	COPY_SCALAR_FIELD(noFilter);
 
 	return newnode;
 }

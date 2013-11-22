@@ -3232,7 +3232,7 @@ generateUserCosModel(RecScanState *recnode) {
 	PlanState *simplanstate;
 	TupleTableSlot *simslot;
 	MemoryContext simcontext;
-printf("Starting model.\n");
+
 	attributes = (AttributeInfo*) recnode->attributes;
 	eventtable = attributes->eventtable;
 	userkey = attributes->userkey;
@@ -3301,7 +3301,7 @@ printf("Starting model.\n");
 	// Query cleanup.
 	recathon_queryEnd(simqueryDesc, simcontext);
 	pfree(querystring);
-printf("Calculating similarities.\n");
+
 	// Now we do the similarity calculations. Note that we
 	// don't include duplicate entries, to save time and space.
 	// The first user ALWAYS has a lower value than the second.
@@ -3344,7 +3344,6 @@ printf("Calculating similarities.\n");
 	recnode->totalUsers = numUsers;
 	recnode->userList = userIDs;
 	recnode->userCFmodel = usermodel;
-printf("Model complete.\n");
 }
 
 /* ----------------------------------------------------------------
@@ -3572,10 +3571,9 @@ generateSVDmodel(RecScanState *recnode) {
 	}
 
 	recathon_queryEnd(queryDesc,recathoncontext);
-printf("Training.\n");
+
 	// We now have all of the events, so we can start training our features.
 	for (j = 0; j < 100; j++) {
-printf("Iteration %d.\n",j);
 		for (i = 0; i < numFeatures; i++) {
 			float learn = 0.001;
 			float penalty = 0.002;
@@ -3618,7 +3616,7 @@ printf("Iteration %d.\n",j);
 			CHECK_FOR_INTERRUPTS();
 		}
 	}
-printf("Training complete.\n");
+
 	// Free up memory.
 	pfree(querystring);
 	pfree(itemAvgs);
@@ -3838,9 +3836,7 @@ applyItemSimGenerate(RecScanState *recnode)
  *
  *		Given a user ID, we need to create some data
  *		structures that will allow us to efficiently
- *		predict ratings for this user. Returns false if
- *		this user has no ratings, or has rated all items,
- *		in which case prediction is useless.
+ *		predict ratings for this user.
  * ----------------------------------------------------------------
  */
 bool
@@ -3869,69 +3865,13 @@ prepUserForRating(RecScanState *recstate, int userID) {
 		freeHash(recstate->simTable);
 		recstate->simTable = NULL;
 	}
-	if (recstate->itemList) {
-		pfree(recstate->itemList);
-		recstate->itemList = NULL;
-	}
 	if (recstate->userFeatures) {
 		pfree(recstate->userFeatures);
 		recstate->userFeatures = NULL;
 	}
 
-	/* We need to obtain a full list of all the items we need to calculate
-	 * a score for. First count, then query. */
+	/* INSERT FORMER LIST CODE HERE */
 	querystring = (char*) palloc(1024*sizeof(char));
-	sprintf(querystring,"select count(distinct %s) from %s where %s not in (select distinct %s from %s where %s = %d);",
-		attributes->itemkey,attributes->eventtable,attributes->itemkey,
-		attributes->itemkey,attributes->eventtable,attributes->userkey,
-		userID);
-	queryDesc = recathon_queryStart(querystring,&recathoncontext);
-	planstate = queryDesc->planstate;
-	hslot = ExecProcNode(planstate);
-	recstate->totalItems = getTupleInt(hslot,"count");
-	recathon_queryEnd(queryDesc,recathoncontext);
-
-	/* It's highly unlikely, but possible, that someone has rated literally
-	 * every item. */
-	if (recstate->totalItems <= 0) {
-		elog(WARNING, "user %d has rated all items, no predictions to be made",
-			userID);
-		return false;
-	}
-
-	recstate->itemList = (int*) palloc(recstate->totalItems*sizeof(int));
-	recstate->itemNum = 0;
-
-	/* Now for the actual query. */
-	sprintf(querystring,"select distinct %s from %s where %s not in (select distinct %s from %s where %s = %d) order by %s;",
-		attributes->itemkey,attributes->eventtable,attributes->itemkey,
-		attributes->itemkey,attributes->eventtable,attributes->userkey,
-		userID,attributes->itemkey);
-	queryDesc = recathon_queryStart(querystring,&recathoncontext);
-	planstate = queryDesc->planstate;
-
-	i = 0;
-	for (;;) {
-		int currentItem;
-
-		hslot = ExecProcNode(planstate);
-		if (TupIsNull(hslot)) break;
-
-		currentItem = getTupleInt(hslot,attributes->itemkey);
-
-		recstate->itemList[i] = currentItem;
-		i++;
-		if (i >= recstate->totalItems) break;
-	}
-	recathon_queryEnd(queryDesc,recathoncontext);
-
-	/* Quick error protection. */
-	recstate->totalItems = i;
-	if (recstate->totalItems <= 0) {
-		elog(WARNING, "user %d has rated all items, no predictions to be made",
-			userID);
-		return false;
-	}
 
 	switch ((recMethod) attributes->method) {
 		/* If this is an item-based CF recommender, we can pre-obtain
@@ -4001,13 +3941,14 @@ prepUserForRating(RecScanState *recstate, int userID) {
 
 			/* The pending list is all of the items we have yet to
 			 * calculate ratings for. We need to maintain partial
-			 * scores and similarity sums for each one. */
-			recstate->pendingTable = hashCreate(recstate->totalItems);
-			for (i = 0; i < recstate->totalItems; i++) {
+			 * scores and similarity sums for each one. In this version
+			 * of the code, note that we rate all items. */
+			recstate->pendingTable = hashCreate(recstate->fullTotalItems);
+			for (i = 0; i < recstate->fullTotalItems; i++) {
 				GenRating *newItem;
 
 				newItem = (GenRating*) palloc(sizeof(GenRating));
-				newItem->ID = recstate->itemList[i];
+				newItem->ID = recstate->fullItemList[i];
 				/* The pending list doesn't need indexes. */
 				newItem->index = -1;
 				newItem->score = 0.0;
@@ -4044,7 +3985,7 @@ prepUserForRating(RecScanState *recstate, int userID) {
 			 * in a hash table for easier access. We base the table on
 			 * the number of items we have to rate - a close enough
 			 * approximation that we won't have much trouble. */
-			recstate->simTable = hashCreate(recstate->totalItems);
+			recstate->simTable = hashCreate(recstate->fullTotalItems);
 
 			/* We need to find the entire similarity table for this
 			 * user, which will be in two parts. */

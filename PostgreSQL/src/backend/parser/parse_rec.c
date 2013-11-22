@@ -19,7 +19,10 @@
 #include "executor/executor.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_clause.h"
+#include "parser/parse_coerce.h"
+#include "parser/parse_expr.h"
 #include "parser/parse_rec.h"
+#include "parser/parser.h"
 #include "utils/builtins.h"
 #include "utils/recathon.h"
 
@@ -29,15 +32,17 @@ static char* getTableRef(ColumnRef *colref, char **colname);
 static AttributeInfo* getAttributeInfo(char *eventtable, char *userkey, char *itemkey, char *eventval,
 	RecommendInfo *recInfo);
 static int checkWhereClause(ColumnRef* attribute, RangeVar* recommender, char* userkey, char* eventval);
-static void modifyAExpr(Node *currentExpr, char* recname, char* viewname);
-static void modifyTargetList(List *target_list, char *recname, char *viewname);
-static void modifyColumnRef(ColumnRef *attribute, char *recname, char *viewname);
+//static void modifyAExpr(Node *currentExpr, char* recname, char* viewname);
+//static void modifyTargetList(List *target_list, char *recname, char *viewname);
+//static void modifyColumnRef(ColumnRef *attribute, char *recname, char *viewname);
 static void modifyFrom(SelectStmt *stmt, RecommendInfo *recInfo);
 static void filterfirst(Node *whereExpr, RecommendInfo *recInfo);
 static bool filterfirstrecurse(Node *whereExpr, RecommendInfo *recInfo);
 //static void applyRecJoin(Node *whereClause, List *fromClause, RecommendInfo *recInfo);
 //static RangeVar* locateJoinTable(Node* recExpr, List *fromClause, RangeVar* eventtable, char* key);
 static bool tableMatch(RangeVar* table, char* tablename);
+static Node *makeTrueConst();
+static Node *userWhereClause(Node* whereClause, char *userkey);
 
 /*
  * transformRecommendClause -
@@ -52,6 +57,7 @@ transformRecommendClause(ParseState *pstate, List **targetlist, SelectStmt *stmt
 					     const char *constructName)
 {
 	RecommendInfo *recInfo;
+	Node *userWhere;
 	recInfo = NULL;
 
 	// We need to do some preprocessing and sanity checks. If any of the sanity
@@ -73,13 +79,8 @@ transformRecommendClause(ParseState *pstate, List **targetlist, SelectStmt *stmt
 			 errmsg("a valid events table has not been provided")));
 
 	// Step two: look through the WHERE clause to see if there are any RecScore
-	// restrictions. If there are, throw an error. In the current version of RecDB,
-	// that will cause problems.
+	// restrictions. If there are, we need to mark this specially.
 	filterfirst(stmt->whereClause, recInfo);
-	if (recInfo->opType == OP_NOFILTER)
-		ereport(ERROR,
-			(errcode(ERRCODE_SYNTAX_ERROR),
-			 errmsg("restrictions on RecScore are not supported at this time")));
 
 	// Step three: see if we are joining the user ID or item ID to another table, in
 	// which case we want to perform a RecJoin.
@@ -91,6 +92,13 @@ transformRecommendClause(ParseState *pstate, List **targetlist, SelectStmt *stmt
 	// schema of the events table. Either way, we make a note of which of our tables
 	// will be the basis of our recommender schema.
 	modifyFrom(stmt, recInfo);
+
+	// Step five: we need to scan the WHERE clause and find which elements pertain
+	// to the user key; this will save us a lot of unnecessary work later on. We'll
+	// make a copy of it that we can modify for our purposes.
+	userWhere = userWhereClause(((Node *) copyObject(stmt->whereClause)), recInfo->attributes->userkey);
+//	userWhere = userWhereClause(stmt->whereClause, recInfo->attributes->userkey);
+	recInfo->attributes->userWhereClause = userWhere;
 
 	// There's an additional step, where we add the RECOMMEND clause elements into
 	// the target list if they aren't there, but we can't perform this step until
@@ -342,13 +350,11 @@ getAttributeInfo(char *eventtable, char *userkey, char *itemkey, char *eventval,
 	attributes->recModelName = NULL;
 	attributes->recModelName2 = NULL;
 	attributes->recViewName = NULL;
-	attributes->numAtts = 0;
-	attributes->attNames = NULL;
-	attributes->attValues = NULL;
-	attributes->target_val = NULL;
+	attributes->userWhereClause = NULL;
 	attributes->IDfound = false;
 	attributes->cellType = CELL_ALPHA;
 	attributes->opType = recInfo->opType;
+	attributes->noFilter = false;
 
 	return attributes;
 }
@@ -444,8 +450,9 @@ checkWhereClause(ColumnRef* attribute, RangeVar* recommender, char* userkey, cha
  * modifyAExpr -
  *	  Scan through an AExpr, which would come from the WHERE or RECOMMEND clauses,
  *	  and replace one table name for another.
+ *	  CURRENTLY NOT IN USE.
  */
-static void
+/*static void
 modifyAExpr(Node *currentExpr, char* recname, char* viewname) {
 	A_Expr *currentAExpr;
 
@@ -466,10 +473,14 @@ modifyAExpr(Node *currentExpr, char* recname, char* viewname) {
 		if (nodeTag(currentAExpr->lexpr) == T_ColumnRef)
 			modifyColumnRef((ColumnRef*)currentAExpr->lexpr, recname, viewname);
 	}
-}
+}*/
 
-/* Scan through the target list and replace one table name for another. */
-static void
+/* 
+ * modifyTargetList -
+ *	  Scan through the target list and replace one table name for another.
+ *	  CURRENTLY NOT IN USE.
+ */
+/*static void
 modifyTargetList(List *target_list, char *recname, char *viewname) {
 	ListCell *select_cell;
 
@@ -478,10 +489,14 @@ modifyTargetList(List *target_list, char *recname, char *viewname) {
 		ColumnRef* target_val = (ColumnRef*) select_target->val;
 		modifyColumnRef(target_val, recname, viewname);
 	}
-}
+}*/
 
-/* Check a ColumnRef to see if the table name should be replaced. */
-static void
+/*
+ * modifyColumnRef -
+ *	  Check a ColumnRef to see if the table name should be replaced.
+ *	  CURRENTLY NOT IN USE.
+ */
+/*static void
 modifyColumnRef(ColumnRef *attribute, char *recname, char *viewname) {
 	List* attFields = attribute->fields;
 	ListCell* att_cell;
@@ -503,7 +518,7 @@ modifyColumnRef(ColumnRef *attribute, char *recname, char *viewname) {
 		default:
 			break;
 	}
-}
+}*/
 
 /*
  * modifyFrom -
@@ -515,7 +530,8 @@ modifyColumnRef(ColumnRef *attribute, char *recname, char *viewname) {
 static void
 modifyFrom(SelectStmt *stmt, RecommendInfo *recInfo) {
 	int i;
-	char *query_string, *recindexname, *eventtable;
+//	char *eventtable;
+	char *query_string, *recindexname;
 	char *recmodelname, *recmodelname2, *recviewname;
 	recMethod method;
 	// Query information.
@@ -615,21 +631,25 @@ modifyFrom(SelectStmt *stmt, RecommendInfo *recInfo) {
 	recInfo->attributes->recModelName = recmodelname;
 	recInfo->attributes->recModelName2 = recmodelname2;
 	recInfo->attributes->recViewName = recviewname;
+//	recInfo->attributes->recViewName = recInfo->attributes->eventtable;
 
 	// When we do find the match, we need to replace our event table from the FROM clause
 	// with the recviewname we found. We also need to modify everything in the WHERE and
 	// RECOMMEND clauses if necessary, as well as the target list. At one point, we would
 	// try to add a condition to the WHERE clause to restrict the user ID, but since we're
 	// utilizing a custom scan operator, it's easier to do it manually at that stage.
-	eventtable = recInfo->attributes->eventtable;
-	modifyAExpr(stmt->whereClause,eventtable,recviewname);
-	modifyTargetList(stmt->targetList,eventtable,recviewname);
-	recInfo->recommender->relname = recviewname;
+//	eventtable = recInfo->attributes->eventtable;
+//	modifyAExpr(stmt->whereClause,eventtable,recviewname);
+//	modifyTargetList(stmt->targetList,eventtable,recviewname);
+//	recInfo->recommender->relname = recviewname;
 
 	// We need to store a pointer to this RecommendInfo struct in the RangeVar
 	// itself, because we'll be passing it on to future structures and eventually
-	// to the plan tree. It is circular, but it's a necessary evil.
+	// to the plan tree. Once we do this, we're done storing it in the recInfo,
+	// so we'll remove it to avoid the circular linking. That would be disastrous
+	// if copyObject were ever invoked.
 	recInfo->recommender->recommender = (Node*) recInfo;
+	recInfo->recommender = NULL;
 }
 
 /*
@@ -641,10 +661,8 @@ modifyFrom(SelectStmt *stmt, RecommendInfo *recInfo) {
  */
 static void
 filterfirst(Node *whereExpr, RecommendInfo *recInfo) {
-	if (filterfirstrecurse(whereExpr, recInfo)) {
-		recInfo->attributes->opType = OP_NOFILTER;
-		recInfo->opType = OP_NOFILTER;
-	}
+	if (filterfirstrecurse(whereExpr, recInfo))
+		recInfo->attributes->noFilter = true;
 }
 
 /*
@@ -848,4 +866,338 @@ tableMatch(RangeVar* table, char* tablename) {
 	}
 
 	return false;
+}
+
+/*
+ * makeTrueConst -
+ *	  A function that creates an AConst to represent a TRUE
+ *	  value. Used when generating a user WHERE clause.
+ */
+static Node*
+makeTrueConst() {
+	A_Const *n;
+	TypeCast *tc;
+
+	n = makeNode(A_Const);
+	n->val.type = T_String;
+	n->val.val.str = "t";
+	n->location = -1;
+
+	tc = makeNode(TypeCast);
+	tc->arg = (Node *) n;
+	tc->typeName = SystemTypeName("bool");
+	tc->location = -1;
+
+	return (Node *) tc;
+}
+
+/*
+ * userWhereOp -
+ *	  A helper function for userWhereClause, which recurses deeper
+ *	  into AEXPR_OP types if necessary. Returns 1 if the user key
+ *	  was found, -1 if some other ColumnRef was found, and 0 if
+ *	  neither.
+ */
+static int
+userWhereOp(Node* whereClause, char *userkey) {
+	A_Expr *recAExpr;
+	int leftresult = 0, rightresult = 0;
+
+	if (!whereClause)
+		return 0;
+
+	recAExpr = (A_Expr*) whereClause;
+
+	// If our expression is an OP or IN, then do the actual check.
+	if (recAExpr->kind == AEXPR_OP || recAExpr->kind == AEXPR_IN) {
+		char *leftcol, *lefttable;
+		char *rightcol, *righttable;
+		bool leftiscol = false, rightiscol = false, userfound = false;
+		bool leftaexpr = false, rightaexpr = false;
+
+		// It is possible to have this odd error under some circumstances.
+		if (recAExpr->name->length == 0)
+			return 0;
+
+		// If the left column is our user key column, that's a good sign.
+		// Let's just hope we're not joining with some other column.
+		if (recAExpr->lexpr && nodeTag(recAExpr->lexpr) == T_ColumnRef) {
+			ColumnRef *leftcr = (ColumnRef*) recAExpr->lexpr;
+
+			leftiscol = true;
+			leftcol = getTableRef(leftcr,&lefttable);
+			if (strcmp(leftcol,userkey) == 0)
+				userfound = true;
+		}
+
+		// If the right column is our user key column, return right away.
+		if (recAExpr->rexpr && nodeTag(recAExpr->rexpr) == T_ColumnRef) {
+			ColumnRef *rightcr = (ColumnRef*) recAExpr->rexpr;
+
+			rightiscol = true;
+			rightcol = getTableRef(rightcr,&righttable);
+			if (strcmp(rightcol,userkey) == 0)
+				userfound = true;
+		}
+
+		// If this OP/IN doesn't involve the user key at all, then we'll
+		// replace it with a TRUE boolean constant. Likewise, if we're
+		// equating it with some other column, that's not useful to us,
+		// so we'll again replace it with a TRUE constant.
+		if (leftiscol && rightiscol)
+			return -1;
+		else if (!leftiscol && !rightiscol)
+			return 0;
+
+		// If this OP has more A_Exprs under it, we need to recurse and
+		// see what's in them.
+		if (recAExpr->lexpr && nodeTag(recAExpr->lexpr) == T_A_Expr) {
+			leftaexpr = true;
+			leftresult = userWhereOp(recAExpr->lexpr,userkey);
+		}
+		if (recAExpr->rexpr && nodeTag(recAExpr->rexpr) == T_A_Expr) {
+			rightaexpr = true;
+			rightresult = userWhereOp(recAExpr->rexpr, userkey);
+		}
+
+		// Any AExprs?
+		if (leftaexpr || rightaexpr) {
+			// If we found another column anywhere, the whole thing is
+			// useless.
+			if (leftresult < 0 || rightresult < 0)
+				return -1;
+
+			// If we didn't find the user column, it's similarly useless.
+			if (leftresult == 0 && rightresult == 0)
+				return 0;
+
+			// Otherwise, if we found the user key, we can use this item.
+			if (userfound) {
+				return 1;
+			}
+			else
+				return 0;
+		}
+	}
+	// If our expression is an OP or IN, then do the actual check.
+	if (recAExpr->kind == AEXPR_OP || recAExpr->kind == AEXPR_IN) {
+		char *leftcol, *lefttable;
+		char *rightcol, *righttable;
+		bool leftiscol = false, rightiscol = false, userfound = false;
+		bool leftaexpr = false, rightaexpr = false;
+
+		// It is possible to have this odd error under some circumstances.
+		if (recAExpr->name->length == 0)
+			return 0;
+
+		// If this OP has more A_Exprs under it, we need to recurse and
+		// see what's in them.
+		if (recAExpr->lexpr && nodeTag(recAExpr->lexpr) == T_A_Expr) {
+			leftaexpr = true;
+			leftresult = userWhereOp(recAExpr->lexpr,userkey);
+		}
+		if (recAExpr->rexpr && nodeTag(recAExpr->rexpr) == T_A_Expr) {
+			rightaexpr = true;
+			rightresult = userWhereOp(recAExpr->rexpr, userkey);
+		}
+
+		// Any AExprs?
+		if (leftaexpr || rightaexpr) {
+			// If we found another column anywhere, the whole thing is
+			// useless.
+			if (leftresult < 0 || rightresult < 0)
+				return -1;
+
+			// If we found the user column, though, make a note.
+			if (leftresult == 1 || rightresult == 1)
+				userfound = true;
+		}
+
+		// If at least one isn't an A_Expr, then we check to see if either
+		// is a ColumnRef.
+
+		// If the left column is our user key column, that's a good sign.
+		// Let's just hope we're not joining with some other column.
+		if (recAExpr->lexpr && nodeTag(recAExpr->lexpr) == T_ColumnRef) {
+			ColumnRef *leftcr = (ColumnRef*) recAExpr->lexpr;
+
+			leftiscol = true;
+			leftcol = getTableRef(leftcr,&lefttable);
+
+			if (strcmp(leftcol,userkey) == 0)
+				userfound = true;
+			else
+				return -1;
+		}
+
+		// If the right column is our user key column, return right away.
+		if (recAExpr->rexpr && nodeTag(recAExpr->rexpr) == T_ColumnRef) {
+			ColumnRef *rightcr = (ColumnRef*) recAExpr->rexpr;
+
+			rightiscol = true;
+			rightcol = getTableRef(rightcr,&righttable);
+
+			if (strcmp(rightcol,userkey) == 0)
+				userfound = true;
+			else
+				return -1;
+		}
+
+		// If both items are columns, that can't possibly be good.
+		if (leftiscol && rightiscol)
+			return 0;
+
+		// Otherwise, if we found the user key, we can use this item.
+		if (userfound)
+			return 1;
+		else
+			return 0;
+	}
+	// Recurse in a similar manner if this is an AND/OR/NOT.
+	else if (recAExpr->kind == AEXPR_AND || recAExpr->kind == AEXPR_OR) {
+		leftresult = userWhereOp(recAExpr->lexpr,userkey);
+		rightresult = userWhereOp(recAExpr->rexpr,userkey);
+
+		if (leftresult < 0 || rightresult < 0)
+			return -1;
+		else if (leftresult == 0 && rightresult == 0)
+			return 0;
+		else
+			return 1;
+	} else if (recAExpr->kind == AEXPR_NOT) {
+		return userWhereOp(recAExpr->rexpr,userkey);
+	}
+
+	// Return 0 by default.
+	return 0;
+}
+
+/*
+ * userWhereClause -
+ *	  A function to retrieve a modified WHERE clause, where all
+ *	  elements pertain only to the user key. Any elements that do
+ *	  not pertain to the user key are replaced with TRUE; this
+ *	  makes the user filtering inexact in complex cases, but it
+ *	  should be good enough for us. Returns NULL if there are no
+ *	  elements pertaining to the user key.
+ */
+static Node*
+userWhereClause(Node* whereClause, char *userkey) {
+	A_Expr *recAExpr;
+
+	if (!whereClause)
+		return NULL;
+
+	// Turns out this isn't necessarily an A_Expr.
+	if (nodeTag(whereClause) != T_A_Expr)
+		return NULL;
+
+	recAExpr = (A_Expr*) whereClause;
+
+	// If our expression is an OP or IN, then do the actual check.
+	if (recAExpr->kind == AEXPR_OP || recAExpr->kind == AEXPR_IN) {
+		char *leftcol, *lefttable;
+		char *rightcol, *righttable;
+		bool leftiscol = false, rightiscol = false, userfound = false;
+		bool leftaexpr = false, rightaexpr = false;
+		int leftresult = 0, rightresult = 0;
+
+		// It is possible to have this odd error under some circumstances.
+		if (recAExpr->name->length == 0)
+			return NULL;
+
+		// If this OP has more A_Exprs under it, we need to recurse and
+		// see what's in them.
+		if (recAExpr->lexpr && nodeTag(recAExpr->lexpr) == T_A_Expr) {
+			leftaexpr = true;
+			leftresult = userWhereOp(recAExpr->lexpr,userkey);
+		}
+		if (recAExpr->rexpr && nodeTag(recAExpr->rexpr) == T_A_Expr) {
+			rightaexpr = true;
+			rightresult = userWhereOp(recAExpr->rexpr, userkey);
+		}
+
+		// Any AExprs?
+		if (leftaexpr || rightaexpr) {
+			// If we found another column anywhere, the whole thing is
+			// useless.
+			if (leftresult < 0 || rightresult < 0)
+				return makeTrueConst();
+
+			// If we found the user column, though, make a note.
+			if (leftresult == 1 || rightresult == 1)
+				userfound = true;
+		}
+
+		// If at least one isn't an A_Expr, then we check to see if either
+		// is a ColumnRef.
+
+		// If the left column is our user key column, that's a good sign.
+		// Let's just hope we're not joining with some other column.
+		if (recAExpr->lexpr && nodeTag(recAExpr->lexpr) == T_ColumnRef) {
+			ColumnRef *leftcr = (ColumnRef*) recAExpr->lexpr;
+
+			leftiscol = true;
+			leftcol = getTableRef(leftcr,&lefttable);
+
+			if (strcmp(leftcol,userkey) == 0)
+				userfound = true;
+			else
+				return makeTrueConst();
+		}
+
+		// If the right column is our user key column, return right away.
+		if (recAExpr->rexpr && nodeTag(recAExpr->rexpr) == T_ColumnRef) {
+			ColumnRef *rightcr = (ColumnRef*) recAExpr->rexpr;
+
+			rightiscol = true;
+			rightcol = getTableRef(rightcr,&righttable);
+
+			if (strcmp(rightcol,userkey) == 0)
+				userfound = true;
+			else
+				return makeTrueConst();
+		}
+
+		// If both items are columns, that can't possibly be good.
+		if (leftiscol && rightiscol)
+			return makeTrueConst();
+
+		// Otherwise, if we found the user key, we can use this item.
+		if (userfound)
+			return (Node *) recAExpr;
+		else
+			return makeTrueConst();
+	}
+	// Recurse if this is an AND/OR/NOT.
+	else if (recAExpr->kind == AEXPR_AND || recAExpr->kind == AEXPR_OR) {
+		recAExpr->lexpr = userWhereClause(recAExpr->lexpr,userkey);
+		recAExpr->rexpr = userWhereClause(recAExpr->rexpr,userkey);
+	} else if (recAExpr->kind == AEXPR_NOT) {
+		recAExpr->rexpr = userWhereClause(recAExpr->rexpr,userkey);
+	}
+
+	// Return the expression.
+	return (Node *) recAExpr;
+}
+
+/*
+ * userWhereClause -
+ *	  A function to transform a modified WHERE clause.
+ */
+void
+userWhereTransform(ParseState *pstate, Node* recommendClause) {
+	RecommendInfo *recInfo;
+	Node *userWhere;
+
+	if (!recommendClause)
+		return;
+
+	recInfo = (RecommendInfo*) recommendClause;
+	userWhere = recInfo->attributes->userWhereClause;
+	if (userWhere) {
+		userWhere = transformExpr(pstate, userWhere);
+		userWhere = coerce_to_boolean(pstate, userWhere, "USER_WHERE");
+	}
+	recInfo->attributes->userWhereClause = userWhere;
 }

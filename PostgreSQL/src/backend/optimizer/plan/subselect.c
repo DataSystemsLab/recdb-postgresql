@@ -1457,7 +1457,7 @@ simplify_EXISTS_query(Query *query)
 		query->havingQual ||
 		query->limitOffset ||
 		query->limitCount ||
-		query->isRecommendStmt ||
+		query->recommendStmt ||
 		query->rowMarks)
 		return false;
 

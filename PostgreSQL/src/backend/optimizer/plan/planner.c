@@ -416,6 +416,19 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	parse->havingQual = preprocess_expression(root, parse->havingQual,
 											  EXPRKIND_QUAL);
 
+	/* NEW FOR RECDB */
+	/* Do expression preprocessing on the user-focused WHERE clause as well. */
+	if (parse->recommendStmt) {
+		RecommendInfo *recInfo;
+		AttributeInfo *attInfo;
+
+		recInfo = (RecommendInfo*) parse->recommendStmt;
+		attInfo = recInfo->attributes;
+
+		attInfo->userWhereClause = preprocess_expression(root,
+						attInfo->userWhereClause, EXPRKIND_QUAL);
+	}
+
 	foreach(l, parse->windowClause)
 	{
 		WindowClause *wc = (WindowClause *) lfirst(l);

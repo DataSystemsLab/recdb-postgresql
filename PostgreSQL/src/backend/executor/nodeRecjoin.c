@@ -152,9 +152,9 @@ ExecRecJoin(RecJoinState *recjoin)
 			/* Otherwise, we need to construct our hash table, since
 			 * we need info from the previous operator to do so. */
 			freeHash(recjoin->itemTable);
-			recjoin->itemTable = hashCreate(recjoin->recnode->totalItems);
-			for (i = 0; i < recjoin->recnode->totalItems; i++) {
-				int currentItem = recjoin->recnode->itemList[i];
+			recjoin->itemTable = hashCreate(recjoin->recnode->fullTotalItems);
+			for (i = 0; i < recjoin->recnode->fullTotalItems; i++) {
+				int currentItem = recjoin->recnode->fullItemList[i];
 
 				tempItem = (GenRating*) palloc(sizeof(GenRating));
 				tempItem->ID = currentItem;

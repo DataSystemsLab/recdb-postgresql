@@ -107,6 +107,7 @@ _equalRangeVar(const RangeVar *a, const RangeVar *b)
 	COMPARE_SCALAR_FIELD(relpersistence);
 	COMPARE_NODE_FIELD(alias);
 	COMPARE_LOCATION_FIELD(location);
+	COMPARE_NODE_FIELD(recommender);
 
 	return true;
 }
@@ -909,7 +910,7 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_SCALAR_FIELD(hasRecursive);
 	COMPARE_SCALAR_FIELD(hasModifyingCTE);
 	COMPARE_SCALAR_FIELD(hasForUpdate);
-	COMPARE_SCALAR_FIELD(isRecommendStmt);
+	COMPARE_NODE_FIELD(recommendStmt);
 	COMPARE_NODE_FIELD(cteList);
 	COMPARE_NODE_FIELD(rtable);
 	COMPARE_NODE_FIELD(jointree);
@@ -1002,7 +1003,6 @@ _equalRecommendInfo(const RecommendInfo *a, const RecommendInfo *b)
 	COMPARE_NODE_FIELD(recommender);
 	COMPARE_NODE_FIELD(attributes);
 	COMPARE_SCALAR_FIELD(opType);
-	COMPARE_NODE_FIELD(next);
 
 	return true;
 }
@@ -1023,13 +1023,11 @@ _equalAttributeInfo(const AttributeInfo *a, const AttributeInfo *b)
 	COMPARE_STRING_FIELD(recModelName);
 	COMPARE_STRING_FIELD(recModelName2);
 	COMPARE_STRING_FIELD(recViewName);
-	COMPARE_SCALAR_FIELD(numAtts);
-	COMPARE_POINTER_FIELD(attNames, a->numAtts*sizeof(char*));
-	COMPARE_POINTER_FIELD(attValues, a->numAtts*sizeof(char*));
-	COMPARE_NODE_FIELD(target_val);
+	COMPARE_NODE_FIELD(userWhereClause);
 	COMPARE_SCALAR_FIELD(IDfound);
 	COMPARE_SCALAR_FIELD(cellType);
 	COMPARE_SCALAR_FIELD(opType);
+	COMPARE_SCALAR_FIELD(noFilter);
 
 	return true;
 }

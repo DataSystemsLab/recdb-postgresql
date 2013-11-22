@@ -143,7 +143,7 @@ typedef struct Query
 	bool		hasModifyingCTE;	/* has INSERT/UPDATE/DELETE in WITH */
 	bool		hasForUpdate;	/* FOR UPDATE or FOR SHARE was specified */
 	/* NEW FOR RECATHON */
-	bool	   	isRecommendStmt;	/* is this a RECOMMEND query? */
+	Node	   	*recommendStmt;	/* is this a RECOMMEND query? */
 
 
 	List	   *cteList;		/* WITH list (of CommonTableExpr's) */
@@ -1516,13 +1516,11 @@ typedef struct AttributeInfo
 	char		*recModelName;
 	char		*recModelName2;
 	char		*recViewName;
-	int		numAtts;
-	char		**attNames;
-	char		**attValues;
-	ColumnRef	*target_val;
+	Node		*userWhereClause;
 	bool		IDfound;
 	recathon_cell	cellType;
 	recathon_optype	opType;
+	bool		noFilter;
 } AttributeInfo;
 
 typedef struct RecommendInfo
@@ -1535,7 +1533,6 @@ typedef struct RecommendInfo
 	RangeVar		*recommender;
 	AttributeInfo		*attributes;
 	recathon_optype		opType;
-	struct RecommendInfo	*next;
 } RecommendInfo;
 
 /* ----------------------

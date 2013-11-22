@@ -882,6 +882,7 @@ _outRangeVar(StringInfo str, const RangeVar *node)
 	WRITE_CHAR_FIELD(relpersistence);
 	WRITE_NODE_FIELD(alias);
 	WRITE_LOCATION_FIELD(location);
+	WRITE_NODE_FIELD(recommender);
 }
 
 static void
@@ -2064,7 +2065,6 @@ _outRecommendInfo(StringInfo str, const RecommendInfo *node)
 	WRITE_NODE_FIELD(recommender);
 	WRITE_NODE_FIELD(attributes);
 	WRITE_INT_FIELD(opType);
-	WRITE_NODE_FIELD(next);
 }
 
 static void
@@ -2085,11 +2085,11 @@ _outAttributeInfo(StringInfo str, const AttributeInfo *node)
 	WRITE_STRING_FIELD(recModelName);
 	WRITE_STRING_FIELD(recModelName2);
 	WRITE_STRING_FIELD(recViewName);
-	WRITE_INT_FIELD(numAtts);
-	WRITE_NODE_FIELD(target_val);
+	WRITE_NODE_FIELD(userWhereClause);
 	WRITE_BOOL_FIELD(IDfound);
 	WRITE_INT_FIELD(cellType);
 	WRITE_INT_FIELD(opType);
+	WRITE_BOOL_FIELD(noFilter);
 }
 
 static void
@@ -2260,7 +2260,7 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_BOOL_FIELD(hasRecursive);
 	WRITE_BOOL_FIELD(hasModifyingCTE);
 	WRITE_BOOL_FIELD(hasForUpdate);
-	WRITE_BOOL_FIELD(isRecommendStmt);
+	WRITE_NODE_FIELD(recommendStmt);
 	WRITE_NODE_FIELD(cteList);
 	WRITE_NODE_FIELD(rtable);
 	WRITE_NODE_FIELD(jointree);

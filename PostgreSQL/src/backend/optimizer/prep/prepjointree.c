@@ -1172,7 +1172,7 @@ is_simple_subquery(Query *subquery)
 		subquery->distinctClause ||
 		subquery->limitOffset ||
 		subquery->limitCount ||
-		subquery->isRecommendStmt ||
+		subquery->recommendStmt ||
 		subquery->hasForUpdate ||
 		subquery->cteList)
 		return false;

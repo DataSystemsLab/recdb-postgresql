@@ -206,7 +206,7 @@ _readQuery(void)
 	READ_BOOL_FIELD(hasRecursive);
 	READ_BOOL_FIELD(hasModifyingCTE);
 	READ_BOOL_FIELD(hasForUpdate);
-	READ_BOOL_FIELD(isRecommendStmt);
+	READ_NODE_FIELD(recommendStmt);
 	READ_NODE_FIELD(cteList);
 	READ_NODE_FIELD(rtable);
 	READ_NODE_FIELD(jointree);
@@ -222,6 +222,70 @@ _readQuery(void)
 	READ_NODE_FIELD(rowMarks);
 	READ_NODE_FIELD(setOperations);
 	READ_NODE_FIELD(constraintDeps);
+
+	READ_DONE();
+}
+
+/* NEW FOR RECDB */
+/*
+ * _readRecommendInfo
+ */
+static RecommendInfo *
+_readRecommendInfo(void)
+{
+	READ_LOCALS(RecommendInfo);
+
+	READ_NODE_FIELD(userkey);
+	READ_NODE_FIELD(itemkey);
+	READ_NODE_FIELD(eventval);
+	READ_STRING_FIELD(strmethod);
+	READ_NODE_FIELD(recommender);
+	READ_NODE_FIELD(attributes);
+	READ_ENUM_FIELD(opType, recathon_optype);
+
+	READ_DONE();
+}
+
+/*
+ * _readAttributeInfo
+ */
+static AttributeInfo *
+_readAttributeInfo(void)
+{
+	READ_LOCALS(AttributeInfo);
+
+	READ_INT_FIELD(userID);
+	READ_STRING_FIELD(recName);
+	READ_STRING_FIELD(usertable);
+	READ_STRING_FIELD(itemtable);
+	READ_STRING_FIELD(eventtable);
+	READ_STRING_FIELD(userkey);
+	READ_STRING_FIELD(itemkey);
+	READ_STRING_FIELD(eventval);
+	READ_INT_FIELD(method);
+	READ_STRING_FIELD(recIndexName);
+	READ_STRING_FIELD(recModelName);
+	READ_STRING_FIELD(recModelName2);
+	READ_STRING_FIELD(recViewName);
+	READ_NODE_FIELD(userWhereClause);
+	READ_BOOL_FIELD(IDfound);
+	READ_ENUM_FIELD(cellType, recathon_cell);
+	READ_ENUM_FIELD(opType, recathon_optype);
+	READ_BOOL_FIELD(noFilter);
+
+	READ_DONE();
+}
+
+/*
+ * _readColumnRef
+ */
+static ColumnRef *
+_readColumnRef(void)
+{
+	READ_LOCALS(ColumnRef);
+
+	READ_NODE_FIELD(fields);
+	READ_LOCATION_FIELD(location);
 
 	READ_DONE();
 }
@@ -1257,6 +1321,10 @@ parseNodeString(void)
 
 	if (MATCH("QUERY", 5))
 		return_value = _readQuery();
+	else if (MATCH("RECOMMENDINFO", 13))
+		return_value = _readRecommendInfo();
+	else if (MATCH("ATTRIBUTEINFO", 13))
+		return_value = _readAttributeInfo();
 	else if (MATCH("SORTGROUPCLAUSE", 15))
 		return_value = _readSortGroupClause();
 	else if (MATCH("WINDOWCLAUSE", 12))
@@ -1271,6 +1339,8 @@ parseNodeString(void)
 		return_value = _readAlias();
 	else if (MATCH("RANGEVAR", 8))
 		return_value = _readRangeVar();
+	else if (MATCH("COLUMNREF", 9))
+		return_value = _readColumnRef();
 	else if (MATCH("INTOCLAUSE", 10))
 		return_value = _readIntoClause();
 	else if (MATCH("VAR", 3))

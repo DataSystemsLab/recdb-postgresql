@@ -1531,10 +1531,8 @@ typedef struct RecScanState
 	int		useratt;		/* the att number for the user key */
 	int		itematt;		/* the att number for the item key */
 	int		eventatt;		/* the att number for the event val */
-	int		totalItems;		/* the number of items to calculate */
-	int		itemNum;		/* which item we're on */
-	int		*itemList;		/* the list of items to calculate */
 	bool		finished;		/* there are no more tuples to consider */
+	List		*userqual;		/* the WHERE clause pertaining to just the user */
 	/* itemCF recommendation */
 	int		totalRatings;		/* number of rated items */
 	GenHash		*ratedTable;		/* the table of ratings we'll use */

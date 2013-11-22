@@ -953,10 +953,10 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 
 	if (stmt->recommendClause) {
 		stmt = transformRecommendClause(pstate, &qry->targetList, stmt, "RECOMMEND");
-		qry->isRecommendStmt = true;
+		qry->recommendStmt = stmt->recommendClause;
 	}
 	else
-		qry->isRecommendStmt = false;
+		qry->recommendStmt = NULL;
 
 	/* Complain if we get called from someplace where INTO is not allowed */
 	if (stmt->intoClause)
@@ -981,17 +981,16 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 	/* mark column origins */
 	markTargetListOrigins(pstate, qry->targetList);
 
-	/* NEW FOR RECDB */
-	/* add RECOMMEND clause elements to the target list */
-	if (stmt->recommendClause) {
-		addRecTargets(pstate, &qry->targetList, stmt->recommendClause);
-//		ereport(ERROR,
-//			(errcode(ERRCODE_SYNTAX_ERROR),
-//			 errmsg("short-circuit end")));
-	}
-
 	/* transform WHERE */
 	qual = transformWhereClause(pstate, stmt->whereClause, "WHERE");
+
+	/* NEW FOR RECDB */
+	/* add RECOMMEND clause elements to the target list and
+	 * transform the user WHERE clause */
+	if (stmt->recommendClause) {
+		addRecTargets(pstate, &qry->targetList, stmt->recommendClause);
+		userWhereTransform(pstate, stmt->recommendClause);
+	}
 
 	/*
 	 * Initial processing of HAVING clause is just like WHERE clause.
