@@ -1,3 +1,7 @@
+/* Regression test cases.*/
+
+
+
 /* ItemCosCF. */
 CREATE RECOMMENDER MovieRec ON ml_ratings USERS FROM userid ITEMS FROM itemid EVENTS FROM ratingval USING itemcoscf;
 SELECT * FROM ml_ratings RECOMMEND itemid TO userid ON ratingval USING itemcoscf WHERE userid = 1;
