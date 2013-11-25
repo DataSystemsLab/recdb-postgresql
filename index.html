@@ -31,38 +31,45 @@
         <h1>
 <a name="welcome-to-recdb" class="anchor" href="#welcome-to-recdb"><span class="octicon octicon-link"></span></a>Welcome to RecDB</h1>
 
-<p>An Open Source Recommendation Engine Built Entirely Inside PostgreSQL 9.2. RecDB allows application developers to build recommendation applications in a heartbeat through a wide variety of built-in recommendation algorithms like user-user collaborative filtering, item-item collaborative filtering, singular value decomposition. Applications powered by RecDB can produce online and flexible personalized recommendations to end-users. You can check out the code, as follows:</p>
+<p>RecDB is an Open Source Recommendation Engine Built Entirely Inside PostgreSQL 9.2. RecDB allows application developers to build recommendation applications in a heartbeat through a wide variety of built-in recommendation algorithms like user-user collaborative filtering, item-item collaborative filtering, singular value decomposition. Applications powered by RecDB can produce online and flexible personalized recommendations to end-users. </p>
+
+<p><img src="http://www-users.cs.umn.edu/%7Esarwat/RecDB/pics/recdblogo.png" alt="RecDB Logo">          current version: <code>v0.2-alpha</code></p>
+
+<h2>
+<a name="how-to-get-source-code" class="anchor" href="#how-to-get-source-code"><span class="octicon octicon-link"></span></a>How to Get Source Code</h2>
+
+<p>You can check out the code, as follows:</p>
 
 <pre><code>$ git clone https://github.com/Sarwat/recdb-postgresql.git
 </code></pre>
 
 <h2>
-<a name="recommended-specifications" class="anchor" href="#recommended-specifications"><span class="octicon octicon-link"></span></a>Recommended Specifications</h2>
+<a name="recommended-machine-specifications" class="anchor" href="#recommended-machine-specifications"><span class="octicon octicon-link"></span></a>Recommended Machine Specifications</h2>
 
-<p>RecDB is designed to be run on a Unix operating system. At least 1GB of RAM is recommended for most queries, though when working with very large data sets more RAM may be desirable, especially when you are not working with apriori recommenders.</p>
+<p>RecDB is designed to be run on a Unix operating system. At least 1GB of RAM is recommended for most queries, though when working with very large data sets more RAM may be desirable, especially when you are not working with apriori (materialized) recommenders.</p>
 
-<h3>
-<a name="installation" class="anchor" href="#installation"><span class="octicon octicon-link"></span></a>Installation</h3>
+<h2>
+<a name="building-and-installation" class="anchor" href="#building-and-installation"><span class="octicon octicon-link"></span></a>Building and Installation</h2>
 
 <p>Once you've synced with GitHub, the folder should contain the source code for PostgreSQL, as well as several Perl scripts in a directory named "./PostgreSQL/scripts/". If you are familiar with installing PostgreSQL from source, RecDB is installed the exact same way; for the sake of simplicity, however, we have included these scripts that will simplify the process. Note that the installation and remake-related scripts MUST be run from within the PostgreSQL folder in order for them to work correctly.</p>
 
-<ol>
-<li>Run the installation script install.pl.</li>
-</ol><pre><code>perl install.pl [abs_path]
+<p>1) Run the installation script install.pl.</p>
+
+<pre><code>perl install.pl [abs_path]
 </code></pre>
 
 <p>[abs_path] is the absolute path to the directory where you want PostgreSQL installed. The directory should exist before running this script. This will also create a folder "data" in the PostgreSQL folder; this is where the database will be located.</p>
 
-<ol>
-<li>Run the database server script pgbackend.pl.</li>
-</ol><pre><code>perl pgbackend.pl
+<p>2) Run the database server script pgbackend.pl.</p>
+
+<pre><code>perl pgbackend.pl
 </code></pre>
 
 <p>The install.pl script stores the install path in a separate file, so there shouldn't be any need to specify it.</p>
 
-<ol>
-<li>In a second terminal, run the database interaction script pgfrontend.pl.</li>
-</ol><pre><code>perl pgfrontend.pl [db_name] [server_host]
+<p>3) In a second terminal, run the database interaction script pgfrontend.pl.</p>
+
+<pre><code>perl pgfrontend.pl [db_name] [server_host]
 </code></pre>
 
 <p>[db_name] is the name of the database that you intend to use.
@@ -88,7 +95,7 @@
 </code></pre>
 
 <h2>
-<a name="how-it-works" class="anchor" href="#how-it-works"><span class="octicon octicon-link"></span></a>How It Works</h2>
+<a name="how-recdb-works" class="anchor" href="#how-recdb-works"><span class="octicon octicon-link"></span></a>How RecDB Works</h2>
 
 <h3>
 <a name="loading-data" class="anchor" href="#loading-data"><span class="octicon octicon-link"></span></a>Loading Data</h3>
@@ -112,15 +119,15 @@ LIMIT 10
 
 <p>Currently, the available recommendation algorithms that could be passed to the USING clause are the following:</p>
 
-<p>ItemCosCF: Item-Item Collaborative Filtering using Cosine Similarity measure.</p>
+<p><code>ItemCosCF</code> Item-Item Collaborative Filtering using Cosine Similarity measure.</p>
 
-<p>ItemPearCF: Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.</p>
+<p><code>ItemPearCF</code> Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.</p>
 
-<p>UserCosCF: User-User Collaborative Filtering using Cosine Similarity measure. </p>
+<p><code>UserCosCF</code> User-User Collaborative Filtering using Cosine Similarity measure. </p>
 
-<p>UserPearCF: User-User Collaborative Filtering using Cosine Similarity measure. </p>
+<p><code>UserPearCF</code> User-User Collaborative Filtering using Cosine Similarity measure. </p>
 
-<p>SVD: Simon Funk Singular Value Decomposition. </p>
+<p><code>SVD</code> Simon Funk Singular Value Decomposition. </p>
 
 <p>Note that if you do not specify which user(s) you want recommendations for, it will generate recommendations for all users, which can take an extremely long time to finish.</p>
 
@@ -161,16 +168,18 @@ LIMIT 10
 <h2>
 <a name="authors" class="anchor" href="#authors"><span class="octicon octicon-link"></span></a>Authors</h2>
 
-<p>Mohamed Sarwat <a href="http://www-users.cs.umn.edu/%7Esarwat/">http://www-users.cs.umn.edu/~sarwat/</a></p>
-
-<p>James Avery</p>
-
-<p>Mohamed F. Mokbel <a href="http://www-users.cs.umn.edu/%7Emokbel/">http://www-users.cs.umn.edu/~mokbel/</a></p>
-
-<h2>
+<ul>
+<li>
+<a href="http://www-users.cs.umn.edu/%7Esarwat/">Mohamed Sarwat</a>  [Twitter:<a href="https://twitter.com/MoSarwat">https://twitter.com/MoSarwat</a>]</li>
+<li>James Avery   [Twitter:<a href="https://twitter.com/TheSoundDefense">https://twitter.com/TheSoundDefense</a>]</li>
+<li>
+<a href="http://www-users.cs.umn.edu/%7Emokbel/">Mohamed F. Mokbel</a>   [Twitter:<a href="https://twitter.com/MohamedMokbel">https://twitter.com/MohamedMokbel</a>]</li>
+</ul><h2>
 <a name="support-or-contact" class="anchor" href="#support-or-contact"><span class="octicon octicon-link"></span></a>Support or Contact</h2>
 
 <p>Having trouble with RecDB ? contact <a href="mailto:sarwat@cs.umn.edu">sarwat@cs.umn.edu</a> and we’ll help you sort it out.</p>
+
+<p>Follow <a href="https://twitter.com/Rec_DB">@Rec_DB</a> on Twitter for updates</p>
       </section>
       <footer>
         <p>This project is maintained by <a href="https://github.com/Sarwat">Sarwat</a></p>
