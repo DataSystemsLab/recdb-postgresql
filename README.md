@@ -4,6 +4,8 @@ An Open Source Recommendation Engine Built Entirely Inside PostgreSQL 9.2. RecDB
 ![RecDB Logo](http://www-users.cs.umn.edu/~sarwat/RecDB/pics/recdblogo.png)
 
 
+## How to Get
+
 You can check out the code, as follows:
 
 ```
