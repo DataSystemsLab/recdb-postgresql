@@ -1,10 +1,10 @@
 ﻿# Welcome to RecDB
 RecDB is an Open Source Recommendation Engine Built Entirely Inside PostgreSQL 9.2. RecDB allows application developers to build recommendation applications in a heartbeat through a wide variety of built-in recommendation algorithms like user-user collaborative filtering, item-item collaborative filtering, singular value decomposition. Applications powered by RecDB can produce online and flexible personalized recommendations to end-users. 
 
-![RecDB Logo](http://www-users.cs.umn.edu/~sarwat/RecDB/pics/recdblogo.png) 
+![RecDB Logo](http://www-users.cs.umn.edu/~sarwat/RecDB/pics/recdblogo.png)     current version: ```v0.2-alpha```
 
 
-## How to Get
+## How to Get Source Code
 
 You can check out the code, as follows:
 
@@ -13,11 +13,11 @@ $ git clone https://github.com/Sarwat/recdb-postgresql.git
 ```
 
 
-## Recommended Specifications
+## Recommended Machine Specifications
 
 RecDB is designed to be run on a Unix operating system. At least 1GB of RAM is recommended for most queries, though when working with very large data sets more RAM may be desirable, especially when you are not working with apriori recommenders.
 
-### Installation
+### Building and Installation
 
 Once you've synced with GitHub, the folder should contain the source code for PostgreSQL, as well as several Perl scripts in a directory named "./PostgreSQL/scripts/". If you are familiar with installing PostgreSQL from source, RecDB is installed the exact same way; for the sake of simplicity, however, we have included these scripts that will simplify the process. Note that the installation and remake-related scripts MUST be run from within the PostgreSQL folder in order for them to work correctly.
 
@@ -70,7 +70,7 @@ If you ever want to eliminate the current database , use the clean.pl script.
 perl clean.pl [db_name] [server_host]
 ```
 
-## How It Works
+## How RecDB Works
 
 ### Loading Data
 We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory.
