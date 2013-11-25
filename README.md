@@ -15,7 +15,7 @@ $ git clone https://github.com/Sarwat/recdb-postgresql.git
 
 ## Recommended Machine Specifications
 
-RecDB is designed to be run on a Unix operating system. At least 1GB of RAM is recommended for most queries, though when working with very large data sets more RAM may be desirable, especially when you are not working with apriori recommenders.
+RecDB is designed to be run on a Unix operating system. At least 1GB of RAM is recommended for most queries, though when working with very large data sets more RAM may be desirable, especially when you are not working with apriori (materialized) recommenders.
 
 ## Building and Installation
 
