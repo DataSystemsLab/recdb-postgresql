@@ -21,7 +21,7 @@ RecDB is designed to be run on a Unix operating system. At least 1GB of RAM is r
 
 Once you've synced with GitHub, the folder should contain the source code for PostgreSQL, as well as several Perl scripts in a directory named "./PostgreSQL/scripts/". If you are familiar with installing PostgreSQL from source, RecDB is installed the exact same way; for the sake of simplicity, however, we have included these scripts that will simplify the process. Note that the installation and remake-related scripts MUST be run from within the PostgreSQL folder in order for them to work correctly.
 
-1. Run the installation script install.pl.
+0. Run the installation script install.pl.
 
 ```
 perl install.pl [abs_path]
@@ -29,7 +29,7 @@ perl install.pl [abs_path]
 
 [abs_path] is the absolute path to the directory where you want PostgreSQL installed. The directory should exist before running this script. This will also create a folder "data" in the PostgreSQL folder; this is where the database will be located.
 
-2. Run the database server script pgbackend.pl.
+1. Run the database server script pgbackend.pl.
 
 ```
 perl pgbackend.pl
@@ -37,7 +37,7 @@ perl pgbackend.pl
 
 The install.pl script stores the install path in a separate file, so there shouldn't be any need to specify it.
 
-3. In a second terminal, run the database interaction script pgfrontend.pl.
+2. In a second terminal, run the database interaction script pgfrontend.pl.
 
 ```
 perl pgfrontend.pl [db_name] [server_host]
