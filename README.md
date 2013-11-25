@@ -146,4 +146,4 @@ Mohamed F. Mokbel <http://www-users.cs.umn.edu/~mokbel/>
 ## Support or Contact
 Having trouble with RecDB ? contact sarwat@cs.umn.edu and we’ll help you sort it out.
 
-Follow @Rec_DB  <https://twitter.com/Rec_DB> on Twitter
+Follow [@Rec_DB](https://twitter.com/Rec_DB) on Twitter
