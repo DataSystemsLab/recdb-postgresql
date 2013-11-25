@@ -137,9 +137,9 @@ LIMIT 10
 ```
 
 ## Authors
-* [Mohamed Sarwat](http://www-users.cs.umn.edu/~sarwat/)  Twitter:<https://twitter.com/MoSarwat>
-* James Avery   Twitter:<https://twitter.com/TheSoundDefense>
-* [Mohamed F. Mokbel](http://www-users.cs.umn.edu/~mokbel/)   Twitter:<https://twitter.com/MohamedMokbel>
+* [Mohamed Sarwat](http://www-users.cs.umn.edu/~sarwat/)  [Twitter:<https://twitter.com/MoSarwat>]
+* James Avery   [Twitter:<https://twitter.com/TheSoundDefense>]
+* [Mohamed F. Mokbel](http://www-users.cs.umn.edu/~mokbel/)   [Twitter:<https://twitter.com/MohamedMokbel>]
 
 ## Support or Contact
 Having trouble with RecDB ? contact sarwat@cs.umn.edu and we’ll help you sort it out.
