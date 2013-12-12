@@ -75,6 +75,41 @@ perl clean.pl [db_name] [server_host]
 ### Loading Data
 We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory.
 
+
+### Creating Recommenders
+Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency. The user needs to specify the ratings table in the ON clause and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings in the USING clause.
+
+```
+CREATE RECOMMENDER MovieRec ON MovieRatings
+USERS FROM userid
+ITEMS FROM itemid
+EVENTS FROM ratingval
+USING ItemCosCF
+```
+
+Currently, the available recommendation algorithms that could be passed to the USING clause are the following:
+
+```ItemCosCF``` Item-Item Collaborative Filtering using Cosine Similarity measure.
+
+```ItemPearCF``` Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.
+
+```UserCosCF``` User-User Collaborative Filtering using Cosine Similarity measure. 
+
+```UserPearCF``` User-User Collaborative Filtering using Cosine Similarity measure. 
+
+```SVD``` Simon Funk Singular Value Decomposition. 
+
+
+Similarly, materialized recommenders can be removed with the following command:
+
+```
+DROP RECOMMENDER MovieRec
+```
+
+Note that if you query a materialized recommender, the three columns listed above will be the only ones returned, and attempting to reference any additional columns will result in an error.
+
+
+
 ### Recommendation Query
 In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if MovieRatings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based on the rating predicted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:
 
@@ -89,37 +124,9 @@ LIMIT 10
 
 When you issue a query such as this, the only interesting data will come from the three columns specified in the RECOMMEND clause. Any other columns that exist in the specified ratings tables will be set to 0.
 
-Currently, the available recommendation algorithms that could be passed to the USING clause are the following:
-
-```ItemCosCF``` Item-Item Collaborative Filtering using Cosine Similarity measure.
-
-```ItemPearCF``` Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.
-
-```UserCosCF``` User-User Collaborative Filtering using Cosine Similarity measure. 
-
-```UserPearCF``` User-User Collaborative Filtering using Cosine Similarity measure. 
-
-```SVD``` Simon Funk Singular Value Decomposition. 
 
 Note that if you do not specify which user(s) you want recommendations for, it will generate recommendations for all users, which can take an extremely long time to finish.
 
-### Materializing Recommenders
-Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency.
-
-```
-CREATE RECOMMENDER MovieRec ON MovieRatings
-USERS FROM userid
-ITEMS FROM itemid
-EVENTS FROM ratingval
-USING ItemCosCF
-```
-Similarly, materialized recommenders can be removed with the following command:
-
-```
-DROP RECOMMENDER MovieRec
-```
-
-Note that if you query a materialized recommender, the three columns listed above will be the only ones returned, and attempting to reference any additional columns will result in an error.
 
 ### More Complex Queries
 The main benefit of implementing the recommendation functionality inside a database enine (PostgreSQL) is to allow for integration with traditional database operations, e.g., selection, projection, join. 
