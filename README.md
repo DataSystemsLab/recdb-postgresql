@@ -73,8 +73,11 @@ perl clean.pl [db_name] [server_host]
 ## How RecDB Works
 
 ### Loading Data
-We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory.
+We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory. For instance, the ratings table may have a schema as follows:
 
+-------------------------------
+| userid | itemid | ratingval |
+-------------------------------
 
 ### Creating Recommenders
 Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency. The user needs to specify the ratings table in the ON clause and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings in the USING clause.
