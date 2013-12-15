@@ -76,9 +76,9 @@ perl clean.pl [db_name] [server_host]
 We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory. For instance, the ratings table may have a schema as follows:
 
 ```
--------------------------------
++-----------------------------+
 | userid | itemid | ratingval |
--------------------------------
++-----------------------------+
 ```
 
 ### Creating Recommenders
