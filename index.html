@@ -103,6 +103,37 @@
 <p>We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory.</p>
 
 <h3>
+<a name="creating-recommenders" class="anchor" href="#creating-recommenders"><span class="octicon octicon-link"></span></a>Creating Recommenders</h3>
+
+<p>Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency. The user needs to specify the ratings table in the ON clause and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings in the USING clause.</p>
+
+<pre><code>CREATE RECOMMENDER MovieRec ON MovieRatings
+USERS FROM userid
+ITEMS FROM itemid
+EVENTS FROM ratingval
+USING ItemCosCF
+</code></pre>
+
+<p>Currently, the available recommendation algorithms that could be passed to the USING clause are the following:</p>
+
+<p><code>ItemCosCF</code> Item-Item Collaborative Filtering using Cosine Similarity measure.</p>
+
+<p><code>ItemPearCF</code> Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.</p>
+
+<p><code>UserCosCF</code> User-User Collaborative Filtering using Cosine Similarity measure. </p>
+
+<p><code>UserPearCF</code> User-User Collaborative Filtering using Cosine Similarity measure. </p>
+
+<p><code>SVD</code> Simon Funk Singular Value Decomposition. </p>
+
+<p>Similarly, materialized recommenders can be removed with the following command:</p>
+
+<pre><code>DROP RECOMMENDER MovieRec
+</code></pre>
+
+<p>Note that if you query a materialized recommender, the three columns listed above will be the only ones returned, and attempting to reference any additional columns will result in an error.</p>
+
+<h3>
 <a name="recommendation-query" class="anchor" href="#recommendation-query"><span class="octicon octicon-link"></span></a>Recommendation Query</h3>
 
 <p>In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if MovieRatings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based on the rating predicted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:</p>
@@ -117,43 +148,12 @@ LIMIT 10
 
 <p>When you issue a query such as this, the only interesting data will come from the three columns specified in the RECOMMEND clause. Any other columns that exist in the specified ratings tables will be set to 0.</p>
 
-<p>Currently, the available recommendation algorithms that could be passed to the USING clause are the following:</p>
-
-<p><code>ItemCosCF</code> Item-Item Collaborative Filtering using Cosine Similarity measure.</p>
-
-<p><code>ItemPearCF</code> Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.</p>
-
-<p><code>UserCosCF</code> User-User Collaborative Filtering using Cosine Similarity measure. </p>
-
-<p><code>UserPearCF</code> User-User Collaborative Filtering using Cosine Similarity measure. </p>
-
-<p><code>SVD</code> Simon Funk Singular Value Decomposition. </p>
-
 <p>Note that if you do not specify which user(s) you want recommendations for, it will generate recommendations for all users, which can take an extremely long time to finish.</p>
-
-<h3>
-<a name="materializing-recommenders" class="anchor" href="#materializing-recommenders"><span class="octicon octicon-link"></span></a>Materializing Recommenders</h3>
-
-<p>Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency.</p>
-
-<pre><code>CREATE RECOMMENDER MovieRec ON MovieRatings
-USERS FROM userid
-ITEMS FROM itemid
-EVENTS FROM ratingval
-USING ItemCosCF
-</code></pre>
-
-<p>Similarly, materialized recommenders can be removed with the following command:</p>
-
-<pre><code>DROP RECOMMENDER MovieRec
-</code></pre>
-
-<p>Note that if you query a materialized recommender, the three columns listed above will be the only ones returned, and attempting to reference any additional columns will result in an error.</p>
 
 <h3>
 <a name="more-complex-queries" class="anchor" href="#more-complex-queries"><span class="octicon octicon-link"></span></a>More Complex Queries</h3>
 
-<p>The main benefit of implementing the recommendation functionality inside a database enine (PostgreSQL) is to allow for integration with traditional database operations, e.g., selection, projection, join. 
+<p>The main benefit of implementing the recommendation functionality inside a database engine (PostgreSQL) is to allow for integration with traditional database operations, e.g., selection, projection, join. 
 For example, the following query recommends the top 10 Comedy movies to user 1. 
 In order to do that, the query joins the recommendation with the Movies table and apply a filter on the movies genre column (genre LIKE '%Comedy%').</p>
 
