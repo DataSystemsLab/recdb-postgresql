@@ -94,15 +94,15 @@ USING ItemCosCF
 
 Currently, the available recommendation algorithms that could be passed to the USING clause are the following:
 
-```ItemCosCF``` Item-Item Collaborative Filtering using Cosine Similarity measure.
+* ```ItemCosCF``` Item-Item Collaborative Filtering using Cosine Similarity measure.
 
-```ItemPearCF``` Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.
+* ```ItemPearCF``` Item-Item Collaborative Filtering using Pearson Correlation Similarity measure.
 
-```UserCosCF``` User-User Collaborative Filtering using Cosine Similarity measure. 
+* ```UserCosCF``` User-User Collaborative Filtering using Cosine Similarity measure. 
 
-```UserPearCF``` User-User Collaborative Filtering using Cosine Similarity measure. 
+* ```UserPearCF``` User-User Collaborative Filtering using Cosine Similarity measure. 
 
-```SVD``` Simon Funk Singular Value Decomposition. 
+* ```SVD``` Simon Funk Singular Value Decomposition. 
 
 
 Similarly, materialized recommenders can be removed with the following command:
