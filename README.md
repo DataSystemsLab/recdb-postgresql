@@ -24,7 +24,7 @@ Once you've synced with GitHub, the folder should contain the source code for Po
 1) Run the installation script install.pl.
 
 ```
-perl install.pl [abs_path]
+perl scripts/install.pl [abs_path]
 ```
 
 [abs_path] is the absolute path to the directory where you want PostgreSQL installed. The directory should exist before running this script. This will also create a folder "data" in the PostgreSQL folder; this is where the database will be located.
@@ -32,7 +32,7 @@ perl install.pl [abs_path]
 2) Run the database server script pgbackend.pl.
 
 ```
-perl pgbackend.pl
+perl scripts/pgbackend.pl
 ```
 
 The install.pl script stores the install path in a separate file, so there shouldn't be any need to specify it.
@@ -40,7 +40,7 @@ The install.pl script stores the install path in a separate file, so there shoul
 3) In a second terminal, run the database interaction script pgfrontend.pl.
 
 ```
-perl pgfrontend.pl [db_name] [server_host]
+perl scripts/pgfrontend.pl [db_name] [server_host]
 ```
 
 [db_name] is the name of the database that you intend to use.
@@ -53,13 +53,13 @@ If you need to rebuild PostgreSQL, there are two options.
 If you have not modified the grammar, you can do a quick rebuild with remake.pl.
 
 ```
-perl remake.pl
+perl scripts/remake.pl
 ```
 
 If you have modified the grammar, you will need to do a longer rebuild with remakefull.pl.
 
 ```
-perl remakefull.pl [abs_path]
+perl scripts/remakefull.pl [abs_path]
 ```
 
 [abs_path] is the absolute path to the directory where you want PostgreSQL installed. The directory should exist before running this script.
@@ -67,7 +67,7 @@ perl remakefull.pl [abs_path]
 If you ever want to eliminate the current database , use the clean.pl script.
 
 ```
-perl clean.pl [db_name] [server_host]
+perl scripts/clean.pl [db_name] [server_host]
 ```
 
 ## How RecDB Works
