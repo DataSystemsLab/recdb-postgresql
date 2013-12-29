@@ -141,8 +141,7 @@ In order to do that, the query joins the recommendation with the Movies table an
 
 ```
 SELECT * FROM ml_ratings R, Movies M
-RECOMMEND R.itemid TO R.userid ON R.ratingval
-USING ItemCosCF
+RECOMMEND R.itemid TO R.userid ON R.ratingval USING ItemCosCF
 WHERE R.userid = 1 AND M.movieid = R.itemid AND M.genre LIKE '%Comedy%'
 ORDER BY R.ratingval
 LIMIT 10
