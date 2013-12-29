@@ -120,8 +120,7 @@ In the recommendation query, the user needs to specify the ratings table and als
 
 ```
 SELECT * FROM ml_ratings R
-RECOMMEND R.itemid TO R.userid ON R.ratingval
-USING ItemCosCF
+RECOMMEND R.itemid TO R.userid ON R.ratingval USING ItemCosCF
 WHERE R.userid = 1
 ORDER BY R.ratingval
 LIMIT 10
