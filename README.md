@@ -73,7 +73,7 @@ perl scripts/clean.pl [db_name] [server_host]
 ## How RecDB Works
 
 ### Loading Data
-We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory. For instance, the ratings table may have a schema as follows:
+We provide the MovieLens data to build a "Hello-World" movie recommendation application using RecDB. You can load the data using the sql script called "initmovielens1mdatabase.sql" stored in "./PostgreSQL" directory. We provide the dataset at "./PostgreSQL/moviedata / MovieLens1M/" directory. For instance, the ratings (i.e., ml_ratings) table may have a schema as follows:
 
 ```
 +-----------------------------+
@@ -85,7 +85,7 @@ We provide the MovieLens data to build a "Hello-World" movie recommendation appl
 Users may create recommenders apriori so that when a recommendation query is issued may be answer with less latency. The user needs to specify the ratings table in the ON clause and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings in the USING clause.
 
 ```
-CREATE RECOMMENDER MovieRec ON MovieRatings
+CREATE RECOMMENDER MovieRec ON ml_ratings
 USERS FROM userid
 ITEMS FROM itemid
 EVENTS FROM ratingval
@@ -116,10 +116,10 @@ Note that if you query a materialized recommender, the three columns listed abov
 
 
 ### Recommendation Query
-In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if MovieRatings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based on the rating predicted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:
+In the recommendation query, the user needs to specify the ratings table and also specify where the user, item, and rating value columns are in that table. Moreover, the user has to designate the recommendation algorithm to be used to predict item ratings. For example, if ml_ratings(userid,itemid,ratingval) represents the ratings table in a movie recommendation application, then to recommend top-10 movies based on the rating predicted using Item-Item Collaborative filtering (applying cosine similarity measure) algorithm to user 1, the user writes the following SQL:
 
 ```
-SELECT * FROM MovieRatings R
+SELECT * FROM ml_ratings R
 RECOMMEND R.itemid TO R.userid ON R.ratingval
 USING ItemCosCF
 WHERE R.userid = 1
@@ -140,7 +140,7 @@ In order to do that, the query joins the recommendation with the Movies table an
 
 
 ```
-SELECT * FROM MovieRatings R, Movies M
+SELECT * FROM ml_ratings R, Movies M
 RECOMMEND R.itemid TO R.userid ON R.ratingval
 USING ItemCosCF
 WHERE R.userid = 1 AND M.movieid = R.itemid AND M.genre LIKE '%Comedy%'
