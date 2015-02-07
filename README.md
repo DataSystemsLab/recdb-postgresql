@@ -146,6 +146,12 @@ ORDER BY R.ratingval
 LIMIT 10
 ```
 
+## Publications
+
+* [Recdb in Action: Recommendation Made Easy in Relational Databases](http://dl.acm.org/citation.cfm?id=2536286)
+M Sarwat, J Avery, MF Mokbel
+Proceedings of the VLDB Endowment 6 (12), 1242-1245, 2013
+
 ## Authors
 * [Mohamed Sarwat](http://www-users.cs.umn.edu/~sarwat/)  [Twitter:<https://twitter.com/MoSarwat>]
 * James Avery   [Twitter:<https://twitter.com/TheSoundDefense>]
