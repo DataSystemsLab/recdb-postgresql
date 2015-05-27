@@ -149,8 +149,10 @@ LIMIT 10
 ## Publications
 
 * [Recdb in Action: Recommendation Made Easy in Relational Databases](http://dl.acm.org/citation.cfm?id=2536286).
-Mohamed Sarwat, James Avery, Mohamed F. Mokbel. 
-Proceedings of the VLDB Endowment 6 (12), 1242-1245, 2013
+Mohamed Sarwat, James L. Avery, Mohamed F. Mokbel. 
+Proceedings of the Very Large Databases Endowment, PVLDB 6 (12), 1242-1245, 2013
+
+* [Recathon: A Middleware for Context-Aware Recommendation in Database Systems](), Mohamed Sarwat, James L. Avery and Mohamed F. Mokbel. Proceedings of IEEE International Conference on Mobile Data Management MDM 2015, Pittsburgh, PA, USA June 2015
 
 ## Authors
 * [Mohamed Sarwat](http://faculty.engineering.asu.edu/sarwat/)  [Twitter:<https://twitter.com/MoSarwat>]
