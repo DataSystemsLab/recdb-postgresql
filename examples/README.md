@@ -64,7 +64,7 @@ Note:  Before feeding database name, you are required to create the database in 
 	Create database <databasename>;
 ```
 
-Note: Download yelp dataset from the link: [https://drive.google.com/folderview?id=0Bx1NPu82wk9HfkZudHRaT1lTcWl0YmxaNkFvU0U5alJneXNPdEV4REJmdEwxSUVzNDVUUVU&usp=sharing](link) and copy the files to ./examples/yepl/ . 
+Note: Download yelp dataset from the link: [https://drive.google.com/folderview?id=0Bx1NPu82wk9HfkZudHRaT1lTcWl0YmxaNkFvU0U5alJneXNPdEV4REJmdEwxSUVzNDVUUVU&usp=sharing](link) and copy the files to ./examples/yelp/ . 
 
 
 
