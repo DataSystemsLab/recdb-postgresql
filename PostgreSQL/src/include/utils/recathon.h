@@ -166,4 +166,7 @@ extern float SVDpredict(RecScanState *recnode, char *itemmodel, int itemid);
 extern void applyRecScore(RecScanState *recnode, TupleTableSlot *slot, int itemid, int itemindex);
 extern void applyItemSim(RecScanState *recnode, char *itemmodel);
 
+/* Functions for copyQuery function. */
+extern void copyQueryHelper(Query *query, Query *mainQuery);
+
 #endif   /* RECATHON_H */

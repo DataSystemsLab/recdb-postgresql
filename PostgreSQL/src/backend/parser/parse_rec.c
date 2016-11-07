@@ -156,6 +156,27 @@ validateClauses(SelectStmt *stmt) {
 }
 
 /*
+ * getRecommendVar -
+ *	  A helper function for getEventsTable, which prevents
+ *	  circular linking from happening.
+ *
+ *
+ */
+static RangeVar* getRecommendVar(RangeVar * var){
+	RangeVar * newvar = makeNode(RangeVar);
+	newvar->catalogname = var->catalogname;
+	newvar->schemaname = var->schemaname;
+	newvar->relname = var->relname;
+	newvar->inhOpt = var->inhOpt;
+	newvar->relpersistence = var->relpersistence;
+	newvar->alias = var->alias;
+	newvar->location = var->location;
+	newvar->recommender = NULL;
+
+	return newvar;
+}
+
+/*
  * getEventsTable -
  *	  A function to look through the FROM list of our
  *	  query, to ascertain which of the elements is the
@@ -217,7 +238,8 @@ getEventsTable(List *fromClause, Node *recommendClause) {
 				fromVar = (RangeVar*) from_node;
 				if (tableMatch(fromVar,usertref)) {
 					eventtable = fromVar->relname;
-					recInfo->recommender = fromVar;
+					//Use getRecommendVar to prevent circular linking while using copy functions
+					recInfo->recommender = getRecommendVar(fromVar);
 					fromVar->recommender = (Node*) recInfo;
 					break;
 				}
@@ -248,7 +270,8 @@ getEventsTable(List *fromClause, Node *recommendClause) {
 						// Make a note of the name, and also
 						// do cross-storage of the table.
 						eventtable = fromVar->relname;
-						recInfo->recommender = fromVar;
+						//Use getRecommendVar to prevent circular linking while using copy functions
+						recInfo->recommender = getRecommendVar(fromVar);
 						fromVar->recommender = (Node*) recInfo;
 					}
 				}
@@ -648,8 +671,9 @@ modifyFrom(SelectStmt *stmt, RecommendInfo *recInfo) {
 	// to the plan tree. Once we do this, we're done storing it in the recInfo,
 	// so we'll remove it to avoid the circular linking. That would be disastrous
 	// if copyObject were ever invoked.
-	recInfo->recommender->recommender = (Node*) recInfo;
-	recInfo->recommender = NULL;
+
+	//recInfo->recommender->recommender = (Node*) recInfo;
+	//recInfo->recommender = NULL;
 }
 
 /*
@@ -1177,6 +1201,7 @@ userWhereClause(Node* whereClause, char *userkey) {
 		recAExpr->rexpr = userWhereClause(recAExpr->rexpr,userkey);
 	}
 
+
 	// Return the expression.
 	return (Node *) recAExpr;
 }
@@ -1200,4 +1225,6 @@ userWhereTransform(ParseState *pstate, Node* recommendClause) {
 		userWhere = coerce_to_boolean(pstate, userWhere, "USER_WHERE");
 	}
 	recInfo->attributes->userWhereClause = userWhere;
+	//debug
+	//printf("type of att userwhere: %u\n", userWhere->type);
 }

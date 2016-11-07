@@ -37,6 +37,8 @@
 #include "parser/parsetree.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/lsyscache.h"
+//NEW FOR RECDB
+#include "utils/recathon.h"
 
 
 /* These parameters are set by GUC */
@@ -1050,6 +1052,7 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 {
 	Query	   *parse = root->parse;
 	Query	   *subquery = rte->subquery;
+	Query      * tempQuery;
 	bool	   *differentTypes;
 	double		tuple_fraction;
 	PlannerInfo *subroot;
@@ -1060,7 +1063,12 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * (really really need to fix the planner to not scribble on its input,
 	 * someday).
 	 */
-	subquery = copyObject(subquery);
+	tempQuery = copyObject(subquery);
+	//NEW FOR RECDB
+	//Prevent an error from happening while using a recommender in sub query
+	copyQueryHelper(tempQuery, subquery);
+	subquery = tempQuery;
+
 
 	/* We need a workspace for keeping track of set-op type coercions */
 	differentTypes = (bool *)

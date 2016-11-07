@@ -4545,3 +4545,28 @@ applyItemSim(RecScanState *recnode, char *itemmodel)
 
 	pfree(querystring);
 }
+
+
+/* ****************************************************************
+ *					_copyQuery function helper
+ * ****************************************************************
+ */
+ void
+copyQueryHelper(Query *query, Query *mainQuery)
+{
+
+	ListCell * l;
+	ListCell   *curr_old = mainQuery->rtable->head;
+
+	if(mainQuery->recommendStmt != NULL)
+		query->recommendStmt = (Node*)(mainQuery->recommendStmt);
+	if(list_length(query->rtable) >= 1){
+		forboth(l, query->rtable, curr_old, mainQuery->rtable){
+					if(((RangeTblEntry*)l)->recommender != NULL){
+									lfirst(l) = lfirst(curr_old);
+					}
+	}
+	}
+
+	return;
+}
