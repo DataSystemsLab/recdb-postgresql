@@ -32,6 +32,8 @@
 #include "utils/snapmgr.h"
 #include "utils/tuplesort.h"
 #include "utils/xml.h"
+//new
+#include "utils/recathon.h"
 
 
 /* Hook for plugins to get control in ExplainOneQuery() */
@@ -120,6 +122,7 @@ ExplainQuery(ExplainStmt *stmt, const char *queryString,
 	ListCell   *lc;
 	bool		timing_set = false;
 
+
 	/* Initialize ExplainState. */
 	ExplainInitState(&es);
 
@@ -193,7 +196,12 @@ ExplainQuery(ExplainStmt *stmt, const char *queryString,
 	 * PREPARE.)  XXX FIXME someday.
 	 */
 	Assert(IsA(stmt->query, Query));
-	rewritten = QueryRewrite((Query *) copyObject(stmt->query));
+	//NEW FOR RECDB
+	//Prevent an error from happening while using a recommender in an explain analyze command
+	Query * temp = (Query *) copyObject(stmt->query);
+	copyQueryHelper(temp, (Query*)stmt->query);
+	rewritten = QueryRewrite(temp);
+
 
 	/* emit opening boilerplate */
 	ExplainBeginOutput(&es);
@@ -214,6 +222,7 @@ ExplainQuery(ExplainStmt *stmt, const char *queryString,
 		/* Explain every plan */
 		foreach(l, rewritten)
 		{
+
 			ExplainOneQuery((Query *) lfirst(l), NULL, &es,
 							queryString, params);
 
@@ -313,6 +322,7 @@ ExplainOneQuery(Query *query, IntoClause *into, ExplainState *es,
 		PlannedStmt *plan;
 
 		/* plan the query */
+
 		plan = pg_plan_query(query, 0, params);
 
 		/* run it (if needed) and produce output */
@@ -349,7 +359,11 @@ ExplainOneUtility(Node *utilityStmt, IntoClause *into, ExplainState *es,
 		List	   *rewritten;
 
 		Assert(IsA(ctas->query, Query));
-		rewritten = QueryRewrite((Query *) copyObject(ctas->query));
+		//NEW FOR RECDB
+		//Prevent an error from happening while using a recommender
+		Query * temp = (Query *) copyObject(ctas->query);
+		copyQueryHelper(temp, (Query*)ctas->query);
+		rewritten = QueryRewrite(temp);
 		Assert(list_length(rewritten) == 1);
 		ExplainOneQuery((Query *) linitial(rewritten), ctas->into, es,
 						queryString, params);
