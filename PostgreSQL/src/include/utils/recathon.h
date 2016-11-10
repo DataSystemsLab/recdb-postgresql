@@ -21,38 +21,38 @@
 
 /* An enum to list all of our recommendation methods. */
 typedef enum {
-	itemCosCF,
-	itemPearCF,
-	userCosCF,
-	userPearCF,
-	SVD
+    itemCosCF,
+    itemPearCF,
+    userCosCF,
+    userPearCF,
+    SVD
 } recMethod;
 
 /* Structures for a linked list of similarity cells. */
 struct sim_node_t {
-	int			id;
-	float			event;
-	struct sim_node_t	*next;
+    int			id;
+    float			event;
+    struct sim_node_t	*next;
 };
 typedef struct sim_node_t* sim_node;
 
 /* Structures for a linked list of neighbor nodes.
  * Used when we have a specific neighborhood size. */
 struct nbr_node_t {
-	int			item1;
-	int			item2;
-	float			similarity;
-	struct nbr_node_t	*next;
+    int			item1;
+    int			item2;
+    float			similarity;
+    struct nbr_node_t	*next;
 };
 typedef struct nbr_node_t* nbr_node;
 
 /* Structure to hold event information for SVD
  * training. Includes space for residual information. */
 struct svd_node_t {
-	int	userid;
-	int	itemid;
-	float	event;
-	float	residual;
+    int	userid;
+    int	itemid;
+    float	event;
+    float	residual;
 };
 typedef struct svd_node_t* svd_node;
 
@@ -89,8 +89,8 @@ extern char* retrieveRecommender(char *eventtable, char *method);
 
 /* Functions for getting recommender data. */
 extern void getRecInfo(char *recindexname, char **ret_eventtable,
-		char **ret_userkey, char **ret_itemkey,
-		char **ret_eventval, char **ret_method, int *ret_numatts);
+                       char **ret_userkey, char **ret_itemkey,
+                       char **ret_eventval, char **ret_method, int *ret_numatts);
 
 /* Functions for parsing CreateRStmt data. */
 extern recMethod validateCreateRStmt(CreateRStmt *recStmt);
@@ -105,43 +105,43 @@ extern void updateCellCounter(char *eventtable, TupleTableSlot *insertslot);
 extern int binarySearch(int *array, int value, int lo, int hi);
 extern int *getAllUsers(int numusers, char* usertable);
 extern float *vector_lengths(char *key, char *eventtable, char *eventval,
-	int *totalNum, int **IDlist);
+                             int *totalNum, int **IDlist);
 extern float dotProduct(sim_node item1, sim_node item2);
 extern float cosineSimilarity(sim_node item1, sim_node item2, float length1, float length2);
 extern int updateItemCosModel(char *eventtable, char *userkey, char *itemkey,
-		char *eventval, char *modelname, int *itemIDs, float *itemLengths,
-		int numItems, bool update);
+                              char *eventval, char *modelname, int *itemIDs, float *itemLengths,
+                              int numItems, bool update);
 
 /* Functions for building a recommender based on itemPearCF. */
 extern void pearson_info(char *key, char *eventtable, char *eventval, int *totalNum,
-				int **IDlist, float **avgList, float **pearsonList);
+                         int **IDlist, float **avgList, float **pearsonList);
 extern float pearsonDotProduct(sim_node item1, sim_node item2, float avg1, float avg2);
 extern float pearsonSimilarity(sim_node item1, sim_node item2, float avg1, float avg2,
-		float pearson1, float pearson2);
+                               float pearson1, float pearson2);
 extern int updateItemPearModel(char *eventtable, char *userkey, char *itemkey,
-		char *eventval, char *modelname, int *itemIDs, float *itemAvgs,
-		float *itemPearsons, int numItems, bool update);
+                               char *eventval, char *modelname, int *itemIDs, float *itemAvgs,
+                               float *itemPearsons, int numItems, bool update);
 
 /* Functions for building a user-based recommender. */
 extern int updateUserCosModel(char *eventtable, char *userkey, char *itemkey,
-		char *eventval, char *modelname, int *userIDs, float *userLengths,
-		int numUsers, bool update);
+                              char *eventval, char *modelname, int *userIDs, float *userLengths,
+                              int numUsers, bool update);
 extern int updateUserPearModel(char *eventtable, char *userkey, char *itemkey,
-		char *eventval, char *modelname, int *userIDs, float *userAvgs,
-		float *userPearsons, int numUsers, bool update);
+                               char *eventval, char *modelname, int *userIDs, float *userAvgs,
+                               float *userPearsons, int numUsers, bool update);
 
 /* Functions for building a SVD recommender. */
 extern svd_node createSVDnode(TupleTableSlot *slot, char *userkey, char *itemkey, char *eventval,
-		int *userIDs, int *itemIDs, int numUsers, int numItems);
+                              int *userIDs, int *itemIDs, int numUsers, int numItems);
 extern void SVDlists(char *userkey, char *itemkey, char *eventtable,
-		int **ret_userIDs, int **ret_itemIDs, int *ret_numUsers, int *ret_numItems);
+                     int **ret_userIDs, int **ret_itemIDs, int *ret_numUsers, int *ret_numItems);
 extern void SVDaverages(char *userkey, char *itemkey, char *eventtable, char *eventval,
-		int *userIDs, int *itemIDs, int numUsers, int numItems,
-		float **ret_itemAvgs, float **ret_userOffsets);
+                        int *userIDs, int *itemIDs, int numUsers, int numItems,
+                        float **ret_itemAvgs, float **ret_userOffsets);
 extern float predictRating(int featurenum, int numFeatures, int userid, int itemid,
-		float **userFeatures, float **itemFeatures, float redisual);
+                           float **userFeatures, float **itemFeatures, float redisual);
 extern int SVDtrain(char *userkey, char *itemkey, char *eventtable, char *eventval,
-		char *usermodelname, char *itemmodelname, bool update);
+                    char *usermodelname, char *itemmodelname, bool update);
 
 /* Functions for building and querying recommenders on-the-fly. */
 extern void generateItemCosModel(RecScanState *recnode);
@@ -165,5 +165,8 @@ extern float userCFpredict(RecScanState *recnode, char *eventval, int itemid);
 extern float SVDpredict(RecScanState *recnode, char *itemmodel, int itemid);
 extern void applyRecScore(RecScanState *recnode, TupleTableSlot *slot, int itemid, int itemindex);
 extern void applyItemSim(RecScanState *recnode, char *itemmodel);
+
+/* Functions for copyQuery function. */
+extern void copyQueryHelper(Query *query, Query *mainQuery);
 
 #endif   /* RECATHON_H */
