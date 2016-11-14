@@ -4500,6 +4500,7 @@ applyItemSim(RecScanState *recnode, char *itemmodel)
 
 	ratedTable = recnode->ratedTable;
 
+<<<<<<< HEAD
 	querystring = (char*) palloc(1024*sizeof(char));
 
 	// For every item we've rated, we need to obtain its similarity
