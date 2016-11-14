@@ -418,16 +418,25 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 
 	/* NEW FOR RECDB */
 	/* Do expression preprocessing on the user-focused WHERE clause as well. */
-	if (parse->recommendStmt) {
-		RecommendInfo *recInfo;
-		AttributeInfo *attInfo;
+	/*In order to Prevent an error from happening while using copy functions
+	 * we do expression preprocessing on range table entries directly*/
 
-		recInfo = (RecommendInfo*) parse->recommendStmt;
-		attInfo = recInfo->attributes;
+	foreach(l, parse->rtable)
+		{
+			RangeTblEntry *rte = (RangeTblEntry *) lfirst(l);
 
-		attInfo->userWhereClause = preprocess_expression(root,
-						attInfo->userWhereClause, EXPRKIND_QUAL);
-	}
+			if (rte->recommender != NULL){
+				RecommendInfo *recInfo;
+				AttributeInfo *attInfo;
+
+				recInfo = (RecommendInfo*) rte->recommender;
+				attInfo = recInfo->attributes;
+
+				attInfo->userWhereClause = preprocess_expression(root,
+										attInfo->userWhereClause, EXPRKIND_QUAL);
+			}
+
+		}
 
 	foreach(l, parse->windowClause)
 	{
