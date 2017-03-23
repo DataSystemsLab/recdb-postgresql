@@ -1113,7 +1113,10 @@ userWhereClause(Node* whereClause, char *userkey) {
     if (!whereClause)
         return NULL;
     
-    // Turns out this isn't necessarily an A_Expr.
+    // Turns out this isn't necessarily an A_Expr.  POSTGIS Support
+    if (nodeTag(whereClause) == T_FuncCall)
+        return makeTrueConst();
+    
     if (nodeTag(whereClause) != T_A_Expr)
         return NULL;
     
