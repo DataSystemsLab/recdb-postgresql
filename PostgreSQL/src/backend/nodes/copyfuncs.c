@@ -28,6 +28,7 @@
 #include "nodes/plannodes.h"
 #include "nodes/relation.h"
 #include "utils/datum.h"
+#include "../../include/nodes/plannodes.h"
 
 
 /*
@@ -400,6 +401,32 @@ _copyIndexOnlyScan(const IndexOnlyScan *from)
 	COPY_SCALAR_FIELD(indexorderdir);
 
 	return newnode;
+}
+
+/*
+ * _copyIndexOnlyScan
+ */
+static RecScan *
+_copyRecScan(const RecScan *from)
+{
+    RecScan *newnode = makeNode(RecScan);
+
+    /*
+     * copy node superclass fields
+     */
+
+
+    CopyScanFields((const Scan *) from, (Scan *) newnode);
+
+    /*
+     * copy remainder of node
+     */
+
+    COPY_NODE_FIELD(recommender);
+   // CopyScanFields((const Scan *) from, (Scan *) newnode);
+    COPY_NODE_FIELD(subscan);
+
+    return newnode;
 }
 
 /*
@@ -3829,9 +3856,9 @@ copyObject(const void *from)
 
 	switch (nodeTag(from))
 	{
-			/*
-			 * PLAN NODES
-			 */
+		/*
+         * PLAN NODES
+         */
 		case T_PlannedStmt:
 			retval = _copyPlannedStmt(from);
 			break;
@@ -3949,6 +3976,9 @@ copyObject(const void *from)
 		case T_PlanInvalItem:
 			retval = _copyPlanInvalItem(from);
 			break;
+        case T_RecScan:
+            retval = _copyRecScan(from);
+            break;
 
 			/*
 			 * PRIMITIVE NODES
