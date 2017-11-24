@@ -148,7 +148,7 @@ LIMIT 10
 
 ## Publications
 
-* [Database System Support for Personalized Recommendation Applications] (http://ieeexplore.ieee.org/document/7930070/)
+* [Database System Support for Personalized Recommendation Applications](http://ieeexplore.ieee.org/document/7930070/)
 Mohamed Sarwat, Raha Moraffah, Mohamed F. Mokbel, James L. Avery:
 Proceedings of the IEEE International Conference on Data Engineering, ICDE 2017: 1320-1331
 
