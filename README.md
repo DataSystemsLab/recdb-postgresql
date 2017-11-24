@@ -148,6 +148,10 @@ LIMIT 10
 
 ## Publications
 
+* [Database System Support for Personalized Recommendation Applications] (http://ieeexplore.ieee.org/document/7930070/)
+Mohamed Sarwat, Raha Moraffah, Mohamed F. Mokbel, James L. Avery:
+Proceedings of the IEEE International Conference on Data Engineering, ICDE 2017: 1320-1331
+
 * [Recdb in Action: Recommendation Made Easy in Relational Databases](http://dl.acm.org/citation.cfm?id=2536286).
 Mohamed Sarwat, James L. Avery, Mohamed F. Mokbel. 
 Proceedings of the Very Large Databases Endowment, PVLDB 6 (12), 1242-1245, 2013
