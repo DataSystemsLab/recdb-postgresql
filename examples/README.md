@@ -1,4 +1,5 @@
 #Examples
+
 This directory contains scripts along-with the .csv files of all datasets of RecDB's examples. In all, we have written scripts on four large datasets i.e MoiveTweet, MoiveLens 100k, MoiveLens 1M and yelps academic dataset. Following is the brief discription of the datasets:
 
 1. MovieTweet: a rich data set consisting of ratings on movies that were contained in well-structured tweets on twitter. This data set consists 11495 ratings for 4730 movies rated from 5788 users. (1) users (userid, name):It consists all information of the registered user. (2) movies (movieid, name, year, genre): Information about movies are stored in this table. (3) ratings (userid, itemid, rating): Each tuple in the ratings table represents how much a user liked a movie after watching it. For further information about MovieTweet, please visit the following [https://github.com/sidooms/MovieTweetings](link).
