@@ -1,7 +1,7 @@
 ﻿# Welcome to RecDB
 RecDB is an Open Source Recommendation Engine Built Entirely Inside PostgreSQL 9.2. RecDB allows application developers to build recommendation applications in a heartbeat through a wide variety of built-in recommendation algorithms like user-user collaborative filtering, item-item collaborative filtering, singular value decomposition. Applications powered by RecDB can produce online and flexible personalized recommendations to end-users. 
 
-![RecDB Logo](http://faculty.engineering.asu.edu/sarwat/wp-content/uploads/2014/09/Untitled.png)          current version: ```v1.1```
+![RecDB Logo](8F51D3FB-A4C0-4236-8598-A084DCDBCF9D.jpeg)          current version: ```v1.1```
 
 
 ## How to Get Source Code
